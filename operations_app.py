@@ -16,7 +16,7 @@ ALL_COLUMNS = [
 ]
 
 st.set_page_config(page_title="GemCraft 日常庫存系統", layout="wide")
-st.title("💎 GemCraft 日常出入庫與盤點系統")
+st.title("💎 GemCraft 日常庫存 - 快速編輯版")
 
 # 初始化資料庫
 if not os.path.exists(MASTER_FILE):
@@ -25,169 +25,59 @@ if not os.path.exists(MASTER_FILE):
 def load_data():
     try:
         df = pd.read_csv(MASTER_FILE, encoding='utf-8-sig')
-        # 補齊可能缺失的欄位
+        # 確保所有欄位都存在
         for col in ALL_COLUMNS:
             if col not in df.columns:
                 df[col] = 0 if "庫存" in col or "成本" in col else ""
+        # 轉型態以利編輯 (數字轉數字，文字轉文字)
+        df['庫存(顆)'] = pd.to_numeric(df['庫存(顆)'], errors='coerce').fillna(0)
+        df['單顆成本'] = pd.to_numeric(df['單顆成本'], errors='coerce').fillna(0)
         return df[ALL_COLUMNS]
     except Exception as e:
-        st.error(f"資料庫讀取失敗: {e}")
+        st.error(f"資料讀取錯誤: {e}")
         return pd.DataFrame(columns=ALL_COLUMNS)
 
+# 讀取資料
 df = load_data()
 
-# --- 分頁設定 ---
-tab1, tab2, tab3, tab4 = st.tabs(["🧮 作品設計扣量", "📥 入庫與盤點修正", "🔍 庫存查詢與報表", "📤 上傳 Excel/CSV 更新"])
+st.info("💡 操作提示：您可以直接在下方表格修改數據，或從 Excel 複製資料後，點擊表格按 `Ctrl+V` 貼上。")
 
-# --- Tab 1: 作品設計扣量 ---
-with tab1:
-    st.subheader("🎨 作品設計領料 (出庫)")
-    wh = st.selectbox("選擇出庫倉庫", WAREHOUSES, key="out_wh")
-    items = df[df['倉庫'] == wh]
-    
-    if not items.empty:
-        # 顯示格式：名稱 (餘額)
-        item_labels = items.apply(lambda r: f"{r['名稱']} (餘:{int(r['庫存(顆)'])})", axis=1).tolist()
-        sel_label = st.selectbox("選擇材料", item_labels)
-        sel_name = sel_label.split(" (")[0]
-        
-        qty = st.number_input("扣除數量", min_value=1, value=1)
-        note = st.text_input("設計備註")
-        
-        if st.button("✅ 確認領料扣庫存"):
-            idx = df[(df['名稱'] == sel_name) & (df['倉庫'] == wh)].index[0]
-            if df.at[idx, '庫存(顆)'] >= qty:
-                df.at[idx, '庫存(顆)'] -= qty
-                df.to_csv(MASTER_FILE, index=False, encoding='utf-8-sig')
-                st.success(f"扣除成功！{sel_name} 剩餘數量：{int(df.at[idx, '庫存(顆)'])}")
-                time.sleep(1)
-                st.rerun()
-            else:
-                st.error("庫存不足！")
-    else:
-        st.info("此倉庫無資料。")
-
-# --- Tab 2: 入庫與盤點修正 ---
-with tab2:
-    st.subheader("📥 盤點修正與新物料入庫")
-    mode = st.radio("操作模式", ["現有商品增減 (盤點)", "新商品初次入庫"])
-    
-    if mode == "現有商品增減 (盤點)":
-        wh_mod = st.selectbox("選擇倉庫", WAREHOUSES, key="mod_wh")
-        mod_items = df[df['倉庫'] == wh_mod]
-        if not mod_items.empty:
-            sel_mod = st.selectbox("選擇商品", mod_items['名稱'].tolist(), key="mod_sel")
-            current_q = df[(df['名稱'] == sel_mod) & (df['倉庫'] == wh_mod)]['庫存(顆)'].values[0]
-            st.write(f"目前系統庫存：**{int(current_q)}**")
-            new_q = st.number_input("修正後實際庫存", min_value=0, value=int(current_q))
-            if st.button("🔧 修正庫存"):
-                idx = df[(df['名稱'] == sel_mod) & (df['倉庫'] == wh_mod)].index[0]
-                df.at[idx, '庫存(顆)'] = new_q
-                df.to_csv(MASTER_FILE, index=False, encoding='utf-8-sig')
-                st.success("庫存已修正！")
-                st.rerun()
-        else:
-            st.info("此倉庫無資料。")
-            
-    else: # 新商品入庫
-        with st.form("add_new_item"):
-            st.write("輸入新商品資訊")
-            c1, c2 = st.columns(2)
-            new_wh = c1.selectbox("存入倉庫", WAREHOUSES)
-            new_cat = c1.selectbox("分類", CATEGORIES)
-            new_name = c2.text_input("商品名稱")
-            new_qty = c2.number_input("初始庫存(顆)", min_value=1, value=1)
-            
-            c3, c4 = st.columns(2)
-            new_w = c3.text_input("寬度mm")
-            new_l = c4.text_input("長度mm")
-            new_shape = c3.text_input("形狀")
-            new_element = c4.text_input("五行")
-            new_cost = st.number_input("單顆成本", min_value=0.0, value=0.0)
-            
-            if st.form_submit_button("➕ 建立新項目"):
-                new_row = {
-                    '編號': f"OP{int(time.time())}",
-                    '倉庫': new_wh, '分類': new_cat, '名稱': new_name,
-                    '寬度mm': new_w, '長度mm': new_l, '形狀': new_shape, '五行': new_element,
-                    '庫存(顆)': new_qty, '單顆成本': new_cost
-                }
-                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                df = df[ALL_COLUMNS]
-                df.to_csv(MASTER_FILE, index=False, encoding='utf-8-sig')
-                st.success("新商品已入庫！")
-                st.rerun()
-
-# --- Tab 3: 庫存查詢 ---
-with tab3:
-    st.subheader("📋 庫存總覽表")
-    st.dataframe(df, use_container_width=True)
-    st.download_button(
-        label="📥 下載完整報表 (CSV)",
-        data=df.to_csv(index=False).encode('utf-8-sig'),
-        file_name=f'inventory_{time.strftime("%Y%m%d")}.csv',
-        mime='text/csv',
+with st.form("editor_form"):
+    # 顯示可編輯的表格 (num_rows="dynamic" 允許新增/刪除行)
+    edited_df = st.data_editor(
+        df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "倉庫": st.column_config.SelectboxColumn(options=WAREHOUSES, required=True),
+            "分類": st.column_config.SelectboxColumn(options=CATEGORIES),
+            "庫存(顆)": st.column_config.NumberColumn(min_value=0, step=1),
+            "單顆成本": st.column_config.NumberColumn(min_value=0.0, step=0.1, format="$%.2f"),
+        },
+        key="inventory_editor"
     )
 
-# --- Tab 4: 上傳 Excel/CSV 更新 (終極解決方案) ---
-with tab4:
-    st.subheader("📤 大量數據更新")
-    st.info("💡 強烈建議：請直接上傳 **Excel (.xlsx)** 檔案，完全不用擔心亂碼問題！")
-    
-    uploaded_file = st.file_uploader("選擇 .xlsx 或 .csv 檔案", type=['xlsx', 'xls', 'csv'])
-    
-    if uploaded_file is not None:
+    # 存檔按鈕
+    save_btn = st.form_submit_button("💾 確認並儲存變更")
+
+    if save_btn:
         try:
-            # 1. 判斷檔案類型並讀取
-            if uploaded_file.name.endswith('.csv'):
-                # CSV 嘗試多種編碼
-                try:
-                    df_new = pd.read_csv(uploaded_file, encoding='utf-8-sig')
-                except:
-                    uploaded_file.seek(0)
-                    df_new = pd.read_csv(uploaded_file, encoding='big5')
-            else:
-                # Excel 直接讀取 (最穩)
-                df_new = pd.read_excel(uploaded_file)
-            
-            # 2. 清理欄位名稱 (去除前後空白)
-            df_new.columns = df_new.columns.str.strip()
-            
-            # 3. 欄位名稱對照 (容錯處理)
-            # 如果您的 Excel 寫 "現有庫存"，自動對應到 "庫存(顆)"
-            rename_map = {
-                '現有庫存': '庫存(顆)',
-                '數量': '庫存(顆)',
-                '進貨數量': '庫存(顆)',
-                '成本': '單顆成本'
-            }
-            df_new.rename(columns=rename_map, inplace=True)
-            
-            # 4. 檢查關鍵欄位
-            required = ['倉庫', '名稱', '庫存(顆)']
-            missing = [c for c in required if c not in df_new.columns]
-            
-            if not missing:
-                # 補齊其他欄位
-                for col in ALL_COLUMNS:
-                    if col not in df_new.columns:
-                        df_new[col] = 0 if "庫存" in col or "成本" in col else ""
-                
-                # 整理順序
-                final_df = df_new[ALL_COLUMNS]
-                
-                st.write("✅ 檔案讀取成功！預覽如下：")
-                st.dataframe(final_df.head())
-                
-                if st.button("⚠️ 確認覆蓋系統數據"):
-                    final_df.to_csv(MASTER_FILE, index=False, encoding='utf-8-sig')
-                    st.success("更新成功！")
-                    time.sleep(1)
-                    st.rerun()
-            else:
-                st.error(f"❌ 欄位對應失敗。您的 Excel 必須包含：{required}")
-                st.write("程式讀到的欄位：", list(df_new.columns))
-                
+            # 存檔前確保欄位完整
+            final_df = edited_df[ALL_COLUMNS]
+            final_df.to_csv(MASTER_FILE, index=False, encoding='utf-8-sig')
+            st.success(f"✅ 已成功儲存 {len(final_df)} 筆資料！")
+            time.sleep(1)
+            st.rerun()
         except Exception as e:
-            st.error(f"檔案讀取錯誤：{e}")
-            st.warning("如果是 Excel 檔，請確認已在 requirements.txt 加入 openpyxl。")
+            st.error(f"存檔失敗: {e}")
+
+st.divider()
+
+# 下載備份功能
+csv = df.to_csv(index=False).encode('utf-8-sig')
+st.download_button(
+    label="📥 下載目前庫存備份 (CSV)",
+    data=csv,
+    file_name=f'inventory_backup_{time.strftime("%Y%m%d")}.csv',
+    mime='text/csv',
+)
