@@ -1,37 +1,45 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+import os
+import time
+
+# 檔案設定
+MASTER_FILE = 'ops_inventory.csv'
+WAREHOUSES = ["Imeng", "千畇"]
 
 st.set_page_config(page_title="GemCraft 日常庫存系統", layout="wide")
-st.title("💎 GemCraft 日常出入庫紀錄")
+st.title("💎 日常出入庫與設計紀錄")
 
-# 連結同一個 Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
-df = conn.read(ttl="1s")
+# 初始化資料庫
+if not os.path.exists(MASTER_FILE):
+    pd.DataFrame(columns=['編號', '倉庫', '分類', '名稱', '現有庫存']).to_csv(MASTER_FILE, index=False, encoding='utf-8-sig')
 
-tab1, tab2 = st.tabs(["🛒 售出/領用扣除", "🔍 現有庫存查詢"])
+df = pd.read_csv(MASTER_FILE, encoding='utf-8-sig')
+
+tab1, tab2 = st.tabs(["🧮 作品設計扣量", "🔍 現有庫存查詢"])
 
 with tab1:
-    st.subheader("🎨 作品設計與售出扣除")
-    wh = st.selectbox("選擇扣除倉庫", ["Imeng", "千畇"])
+    st.subheader("作品設計領料")
+    wh = st.selectbox("選擇倉庫", WAREHOUSES)
     items = df[df['倉庫'] == wh]
-    
     if not items.empty:
-        item_labels = items.apply(lambda r: f"{r['編號']} - {r['名稱']} (餘:{int(r['現有庫存'])})", axis=1).tolist()
-        sel_label = st.selectbox("選擇使用的材料", item_labels)
-        sel_id = sel_label.split(" - ")[0]
+        # 顯示格式：名稱 (餘額)
+        item_labels = items.apply(lambda r: f"{r['名稱']} (餘:{int(r['現有庫存'])})", axis=1).tolist()
+        sel_label = st.selectbox("選擇材料", item_labels)
+        sel_name = sel_label.split(" (")[0]
         
-        qty = st.number_input("扣除數量", min_value=1, value=1)
-        note = st.text_input("備註 (設計用途)")
+        qty = st.number_input("使用數量", min_value=1, value=1)
+        note = st.text_input("設計備註 (例如：主石/配石)")
         
-        if st.button("✅ 確認扣除數量"):
-            idx = df[df['編號'] == sel_id].index[0]
+        if st.button("✅ 確認領料"):
+            idx = df[(df['名稱'] == sel_name) & (df['倉庫'] == wh)].index[0]
             df.at[idx, '現有庫存'] -= qty
-            conn.update(data=df)
-            st.warning(f"已完成更新！餘額將同步至雲端。")
+            df.to_csv(MASTER_FILE, index=False, encoding='utf-8-sig')
+            st.success(f"扣除成功！{sel_name} 剩餘：{df.at[idx, '現有庫存']}")
             st.rerun()
+    else:
+        st.info("目前此倉庫無庫存資料，請先至盤點分頁新增。")
 
 with tab2:
-    # 只顯示不敏感的欄位
-    safe_df = df[['編號', '倉庫', '分類', '名稱', '現有庫存']]
-    st.dataframe(safe_df, use_container_width=True)
+    st.subheader("📋 目前庫存總覽")
+    st.dataframe(df[['編號', '倉庫', '分類', '名稱', '現有庫存']], use_container_width=True)
