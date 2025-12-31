@@ -57,6 +57,7 @@ with tab1:
         
         if st.button("✅ 確認領料"):
             idx = df[(df['名稱'] == sel_name) & (df['倉庫'] == wh)].index[0]
+            # 檢查是否夠扣
             if df.at[idx, '庫存(顆)'] >= qty:
                 df.at[idx, '庫存(顆)'] -= qty
                 df.to_csv(MASTER_FILE, index=False, encoding='utf-8-sig')
@@ -68,7 +69,7 @@ with tab1:
     else:
         st.info("該倉庫無商品。")
 
-# --- Tab 2: 入庫與盤點修正 ---
+# --- Tab 2: 入庫與盤點修正 (已修復崩潰問題) ---
 with tab2:
     st.subheader("📥 盤點修正與新物料入庫")
     mode = st.radio("操作模式", ["現有商品增減 (盤點)", "新商品初次入庫"])
@@ -78,9 +79,17 @@ with tab2:
         mod_items = df[df['倉庫'] == wh_mod]
         if not mod_items.empty:
             sel_mod = st.selectbox("選擇商品", mod_items['名稱'].tolist(), key="mod_sel")
+            
+            # 取得目前庫存
             current_q = df[(df['名稱'] == sel_mod) & (df['倉庫'] == wh_mod)]['庫存(顆)'].values[0]
             st.write(f"目前系統庫存：**{int(current_q)}**")
-            new_q = st.number_input("修正後庫存", min_value=0, value=int(current_q))
+            
+            # --- 關鍵修正：防止負數庫存導致崩潰 ---
+            # 如果目前庫存是負的 (例如 -96)，預設值改為 0，避免低於 min_value=0
+            safe_value = max(0, int(current_q))
+            
+            new_q = st.number_input("修正後庫存", min_value=0, value=safe_value)
+            
             if st.button("🔧 修正庫存"):
                 idx = df[(df['名稱'] == sel_mod) & (df['倉庫'] == wh_mod)].index[0]
                 df.at[idx, '庫存(顆)'] = new_q
@@ -120,7 +129,7 @@ with tab3:
     st.dataframe(df, use_container_width=True)
     st.download_button("📥 下載報表", df.to_csv(index=False).encode('utf-8-sig'), f'inv_{time.strftime("%Y%m%d")}.csv', 'text/csv')
 
-# --- Tab 4: 複製貼上更新 (超級除錯版) ---
+# --- Tab 4: 複製貼上更新 (Error Killer) ---
 with tab4:
     st.subheader("📤 複製貼上更新 (Error Killer)")
     st.info("💡 操作方式：從 Excel 複製表格 (含標題)，直接貼在下方。")
@@ -158,7 +167,7 @@ with tab4:
                 if st.button("⚠️ 確認覆蓋"):
                     final_df.to_csv(MASTER_FILE, index=False, encoding='utf-8-sig')
                     st.success("更新成功！")
-                    time.sleep(1) # <--- 之前可能斷在這裡
+                    time.sleep(1)
                     st.rerun()
             else:
                 st.error("❌ 欄位對應失敗")
