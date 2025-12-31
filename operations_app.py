@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import time
-import io  # 這是處理複製貼上的關鍵
+import io  # 關鍵模組：用於處理複製貼上的文字
 
 # --- 1. 基礎參數設定 ---
 MASTER_FILE = 'ops_inventory.csv'
@@ -42,7 +42,7 @@ df = load_data()
 # --- 3. 建立功能分頁 ---
 tab1, tab2, tab3, tab4 = st.tabs(["🧮 作品設計扣量", "📥 入庫與盤點修正", "🔍 庫存查詢與報表", "📤 複製貼上更新 (除錯版)"])
 
-# --- Tab 1: 作品設計扣量 (維持原樣) ---
+# --- Tab 1: 作品設計扣量 ---
 with tab1:
     st.subheader("🎨 作品設計領料")
     wh = st.selectbox("選擇出庫倉庫", WAREHOUSES, key="out_wh")
@@ -68,7 +68,7 @@ with tab1:
     else:
         st.info("該倉庫無商品。")
 
-# --- Tab 2: 入庫與盤點修正 (維持原樣) ---
+# --- Tab 2: 入庫與盤點修正 ---
 with tab2:
     st.subheader("📥 盤點修正與新物料入庫")
     mode = st.radio("操作模式", ["現有商品增減 (盤點)", "新商品初次入庫"])
@@ -114,7 +114,7 @@ with tab2:
                 st.success("入庫成功！")
                 st.rerun()
 
-# --- Tab 3: 庫存查詢 (維持原樣) ---
+# --- Tab 3: 庫存查詢 ---
 with tab3:
     st.subheader("📋 庫存總覽")
     st.dataframe(df, use_container_width=True)
@@ -123,13 +123,13 @@ with tab3:
 # --- Tab 4: 複製貼上更新 (超級除錯版) ---
 with tab4:
     st.subheader("📤 複製貼上更新 (Error Killer)")
-    st.info("💡 如果出現紅字錯誤，請看下方的「詳細診斷訊息」。")
+    st.info("💡 操作方式：從 Excel 複製表格 (含標題)，直接貼在下方。")
     
-    paste_data = st.text_area("請在此貼上 Excel 資料 (含標題)", height=300)
+    paste_data = st.text_area("請在此貼上 Excel 資料", height=300)
     
     if paste_data:
         try:
-            # 使用更寬容的讀取設定：跳過壞掉的行 (on_bad_lines='skip')
+            # 使用更寬容的讀取設定：跳過壞掉的行
             df_new = pd.read_csv(io.StringIO(paste_data), sep='\t', on_bad_lines='skip')
             
             # 清理標題
@@ -158,4 +158,15 @@ with tab4:
                 if st.button("⚠️ 確認覆蓋"):
                     final_df.to_csv(MASTER_FILE, index=False, encoding='utf-8-sig')
                     st.success("更新成功！")
-                    time.sleep(
+                    time.sleep(1) # <--- 之前可能斷在這裡
+                    st.rerun()
+            else:
+                st.error("❌ 欄位對應失敗")
+                st.warning(f"系統找不到這些關鍵欄位: {missing}")
+                st.write("---")
+                st.write("🔍 **系統實際讀到的欄位如下 (請檢查是否有錯字或亂碼):**")
+                st.code(df_new.columns.tolist())
+                
+        except Exception as e:
+            st.error("❌ 發生未預期的錯誤")
+            st.exception(e)
