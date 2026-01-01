@@ -263,7 +263,7 @@ if page == "📦 庫存管理與進貨":
             with st.form("out_form"):
                 st.write(f"[{row['倉庫']}] {row['名稱']} | 批號:{row['批號']} | 存:{cur_s}")
                 qty_o = st.number_input("出庫數量", min_value=0, max_value=max(0, cur_s), value=0)
-              reason = st.selectbox("出庫類別", ["商品", "自用", "損壞", "樣品", "其他"])
+                reason = st.selectbox("出庫類別", ["商品", "自用", "損壞", "樣品", "其他"])
                 note_out = st.text_area("備註")
                 if st.form_submit_button("確認出庫"):
                     if qty_o > 0:
