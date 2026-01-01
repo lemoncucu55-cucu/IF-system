@@ -183,12 +183,20 @@ if page == "📦 庫存管理與進貨":
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                     save_inventory(); save_history(); st.success(f"已完成：{log_action}"); st.rerun()
 
-    with tab2: # ✨ 建立新商品 (這裡修正了缺漏)
+    with tab2: # ✨ 建立新商品
         with st.form("add_new"):
             c1, c2, c3 = st.columns(3)
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
             cat = c2.selectbox("分類", ["天然石", "配件", "耗材"])
-            name = c3.text_input("名稱")
+            
+            # --- 🔥 名稱欄位修改：改為下拉選單 + 手動輸入 ---
+            name_opts = get_dynamic_options('名稱', []) # 取得資料庫中已有的名稱
+            name_sel = c3.selectbox("名稱 (可輸入篩選)", name_opts)
+            if name_sel == "➕ 手動輸入/新增":
+                name = st.text_input("請輸入新商品名稱")
+            else:
+                name = name_sel
+            # ----------------------------------------------
             
             s1, s2, s3 = st.columns(3)
             w_mm = s1.number_input("寬度 (mm)", min_value=0.0, step=0.1, value=0.0)
@@ -207,27 +215,28 @@ if page == "📦 庫存管理與進貨":
             batch_init = c8.text_input("初始批號", value=f"{date.today().strftime('%Y%m%d')}-01")
             
             if st.form_submit_button("➕ 建立商品"):
-                nid = f"ST{int(time.time())}"
-                new_r = {
-                    '編號': nid, '批號': batch_init, '倉庫': wh, '分類': cat, '名稱': name, 
-                    '寬度mm': w_mm, '長度mm': l_mm, '形狀': shape, '五行': elem, 
-                    '進貨廠商': sup, '庫存(顆)': qty_init, '進貨日期': date.today()
-                }
-                st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
-                
-                # --- 🔴 修正：補上寫入歷史紀錄的程式碼 ---
-                log = {
-                    '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                    '單號': 'NEW', '動作': '新商品建檔', 
-                    '倉庫': wh, '編號': nid, '批號': batch_init,
-                    '分類': cat, '名稱': name, 
-                    '規格': f"{w_mm}x{l_mm}mm", '廠商': sup, 
-                    '數量變動': qty_init
-                }
-                st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                # -------------------------------------
-
-                save_inventory(); save_history(); st.success(f"已建立：{name}"); st.rerun()
+                if not name:
+                    st.error("名稱不能為空！")
+                else:
+                    nid = f"ST{int(time.time())}"
+                    new_r = {
+                        '編號': nid, '批號': batch_init, '倉庫': wh, '分類': cat, '名稱': name, 
+                        '寬度mm': w_mm, '長度mm': l_mm, '形狀': shape, '五行': elem, 
+                        '進貨廠商': sup, '庫存(顆)': qty_init, '進貨日期': date.today()
+                    }
+                    st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
+                    
+                    log = {
+                        '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                        '單號': 'NEW', '動作': '新商品建檔', 
+                        '倉庫': wh, '編號': nid, '批號': batch_init,
+                        '分類': cat, '名稱': name, 
+                        '規格': f"{w_mm}x{l_mm}mm", '廠商': sup, 
+                        '數量變動': qty_init
+                    }
+                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
+                    
+                    save_inventory(); save_history(); st.success(f"已建立：{name}"); st.rerun()
 
     with tab4: # 📤 領用與出庫
         inv_o = st.session_state['inventory'].copy()
