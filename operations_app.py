@@ -189,28 +189,22 @@ if page == "📦 庫存管理與進貨":
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
             cat = c2.selectbox("分類", ["天然石", "配件", "耗材"])
             
-            # --- 🔴 修正：強制顯示庫存中的名稱選單 ---
-            # 直接讀取目前的庫存，確保抓到最新的名稱列表
+            # --- 修正：強制顯示庫存中的名稱選單 ---
             current_inv = st.session_state['inventory']
             if not current_inv.empty:
-                # 抓取不重複的名稱，並排除空值
                 exist_names = current_inv['名稱'].dropna().unique().tolist()
                 exist_names = sorted([x for x in exist_names if str(x).strip() != ''])
             else:
                 exist_names = []
             
-            # 建立選單選項
             name_options = ["➕ 手動輸入/新增"] + exist_names
             
-            # 使用 selectbox
             name_sel = c3.selectbox("名稱 (選現有或新增)", name_options, help="選擇『手動輸入/新增』可輸入新名字")
             
-            # 如果選了手動輸入，則顯示文字框
             if name_sel == "➕ 手動輸入/新增":
                 name = c3.text_input("輸入新名稱", placeholder="例如：白水晶")
             else:
                 name = name_sel
-            # ---------------------------------------
             
             s1, s2, s3 = st.columns(3)
             w_mm = s1.number_input("寬度 (mm)", min_value=0.0, step=0.1, value=0.0)
@@ -263,6 +257,7 @@ if page == "📦 庫存管理與進貨":
             with st.form("out_form"):
                 st.write(f"[{row['倉庫']}] {row['名稱']} | 批號:{row['批號']} | 存:{cur_s}")
                 qty_o = st.number_input("出庫數量", min_value=0, max_value=max(0, cur_s), value=0)
+                # 🔴 修正處：這裡的縮排已經對齊
                 reason = st.selectbox("出庫類別", ["商品", "自用", "損壞", "樣品", "其他"])
                 note_out = st.text_area("備註")
                 if st.form_submit_button("確認出庫"):
