@@ -8,7 +8,6 @@ import time
 # 1. 核心設定
 # ==========================================
 
-# 欄位設定 (含批號，無成本金額)
 COLUMNS = [
     '編號', '批號', '倉庫', '分類', '名稱', 
     '寬度mm', '長度mm', '形狀', '五行', 
@@ -18,7 +17,6 @@ COLUMNS = [
 
 SENSITIVE_COLUMNS = ['進貨廠商', '廠商']
 
-# 歷史紀錄欄位
 HISTORY_COLUMNS = [
     '紀錄時間', '單號', '動作', '倉庫', '批號', '編號', '分類', '名稱', '規格', 
     '廠商', '數量變動'
@@ -48,55 +46,32 @@ def save_history():
     except Exception: pass
 
 def robust_import_inventory(df):
-    # 清理欄位名稱
     df.columns = df.columns.astype(str).str.strip().str.replace('\ufeff', '')
-    
-    if 'label' in df.columns:
-        df = df.drop(columns=['label'])
-    
-    # 若舊檔案沒有批號，自動補上 '初始存貨'
-    if '批號' not in df.columns:
-        df['批號'] = '初始存貨'
-    
-    if '倉庫' not in df.columns:
-        df.insert(1, '倉庫', 'Imeng')
-    
-    # 補齊缺失欄位
+    if 'label' in df.columns: df = df.drop(columns=['label'])
+    if '批號' not in df.columns: df['批號'] = '初始存貨'
+    if '倉庫' not in df.columns: df.insert(1, '倉庫', 'Imeng')
     for col in COLUMNS:
-        if col not in df.columns:
-            df[col] = ""
-            
-    # 只保留定義好的欄位
+        if col not in df.columns: df[col] = ""
     df = df[COLUMNS].copy()
-    
-    # 數值轉換
     for col in ['寬度mm', '長度mm', '進貨數量(顆)', '庫存(顆)']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    
-    # 確保批號欄位是字串，避免讀取成數字
     df['批號'] = df['批號'].astype(str)
-    
     return df
 
 def format_size(row):
     try:
         w = float(row.get('寬度mm', 0))
         l = float(row.get('長度mm', 0))
-        if l > 0:
-            return f"{w}x{l}mm"
+        if l > 0: return f"{w}x{l}mm"
         return f"{w}mm"
-    except:
-        return "0mm"
+    except: return "0mm"
 
 def make_inventory_label(row):
     sz = format_size(row)
     elem = f"({row.get('五行','')})" if row.get('五行','') else ""
     sup = f" | {row.get('進貨廠商','')}" if st.session_state.get('admin_mode', False) else ""
     stock_val = int(float(row.get('庫存(顆)', 0)))
-    
-    # 加入【批號】顯示
     batch_str = f"【批:{row.get('批號', '無')}】"
-    
     return f"[{row.get('倉庫','Imeng')}] {batch_str} {elem}{row.get('編號','')} | {row.get('名稱','')} | {row.get('形狀','')} ({sz}){sup} | 存:{stock_val}"
 
 def get_dynamic_options(col, defaults):
@@ -127,11 +102,11 @@ if 'history' not in st.session_state:
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
 
-st.title("💎 GemCraft 庫存管理系統 (批號+雜支計算版)")
+st.title("💎 GemCraft 庫存管理系統")
 
 with st.sidebar:
     st.header("🔑 權限驗證")
-    pwd = st.text_input("主管密碼", type="password", help="輸入正確密碼可解鎖：刪除商品、檢視供應商")
+    pwd = st.text_input("主管密碼", type="password")
     st.session_state['admin_mode'] = (pwd == "admin123")
     
     st.header("功能導航")
@@ -152,7 +127,7 @@ with st.sidebar:
         try:
             df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
             st.session_state['inventory'] = robust_import_inventory(df)
-            save_inventory(); st.success("資料已匯入並更新欄位結構！"); time.sleep(1); st.rerun()
+            save_inventory(); st.success("資料已匯入！"); time.sleep(1); st.rerun()
         except Exception as e: st.error(f"匯入失敗: {e}")
 
     if st.button("🔴 重置系統", type="secondary"):
@@ -169,19 +144,18 @@ if page == "📦 庫存管理與進貨":
         if not inv.empty:
             inv_l = inv.copy()
             inv_l['label'] = inv_l.apply(make_inventory_label, axis=1)
-            target = st.selectbox("選擇要參考的商品", inv_l['label'].tolist(), key="t1_sel")
+            target = st.selectbox("選擇商品", inv_l['label'].tolist(), key="t1_sel")
             idx = inv_l[inv_l['label'] == target].index[0]
             row = inv.loc[idx]
             
             with st.form("restock_form"):
-                st.info(f"參考商品：{row['名稱']} | 當前批號：{row['批號']}")
+                st.info(f"商品：{row['名稱']} | 批號：{row['批號']}")
                 c1, c2 = st.columns(2)
                 qty = c1.number_input("進貨數量", min_value=1, value=1)
-                
-                restock_type = c2.radio("入庫方式", ["📦 建立新批號 (推薦)", "➕ 合併入此批號"], help="『建立新批號』會新增一列，方便區分不同時間進貨的同款商品")
+                restock_type = c2.radio("入庫方式", ["📦 建立新批號", "➕ 合併入此批號"])
                 
                 default_new_batch = f"{date.today().strftime('%Y%m%d')}-A"
-                new_batch_id = st.text_input("設定新批號", value=default_new_batch) if restock_type == "📦 建立新批號 (推薦)" else row['批號']
+                new_batch_id = st.text_input("新批號", value=default_new_batch) if restock_type == "📦 建立新批號" else row['批號']
 
                 if st.form_submit_button("確認入庫"):
                     if restock_type == "➕ 合併入此批號":
@@ -207,23 +181,21 @@ if page == "📦 庫存管理與進貨":
                         '數量變動': qty
                     }
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                    save_inventory(); save_history(); st.success(f"已完成入庫：{log_action}"); st.rerun()
+                    save_inventory(); save_history(); st.success(f"已完成：{log_action}"); st.rerun()
 
-    with tab2: # ✨ 建立新商品
+    with tab2: # ✨ 建立新商品 (這裡修正了缺漏)
         with st.form("add_new"):
             c1, c2, c3 = st.columns(3)
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
             cat = c2.selectbox("分類", ["天然石", "配件", "耗材"])
             name = c3.text_input("名稱")
             
-            st.markdown("##### 📏 規格尺寸")
             s1, s2, s3 = st.columns(3)
             w_mm = s1.number_input("寬度 (mm)", min_value=0.0, step=0.1, value=0.0)
             l_mm = s2.number_input("長度 (mm)", min_value=0.0, step=0.1, value=0.0)
             shape = s3.selectbox("形狀", get_dynamic_options('形狀', DEFAULT_SHAPES))
             if shape == "➕ 手動輸入/新增": shape = st.text_input("輸入自定義形狀")
             
-            st.markdown("##### 🏷️ 其他資訊")
             c4, c5, c6 = st.columns(3)
             elem = c4.selectbox("五行", get_dynamic_options('五行', DEFAULT_ELEMENTS))
             if elem == "➕ 手動輸入/新增": elem = st.text_input("輸入自定義五行")
@@ -242,27 +214,38 @@ if page == "📦 庫存管理與進貨":
                     '進貨廠商': sup, '庫存(顆)': qty_init, '進貨日期': date.today()
                 }
                 st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
-                save_inventory(); st.success(f"已成功建立新商品：{name}"); st.rerun()
+                
+                # --- 🔴 修正：補上寫入歷史紀錄的程式碼 ---
+                log = {
+                    '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                    '單號': 'NEW', '動作': '新商品建檔', 
+                    '倉庫': wh, '編號': nid, '批號': batch_init,
+                    '分類': cat, '名稱': name, 
+                    '規格': f"{w_mm}x{l_mm}mm", '廠商': sup, 
+                    '數量變動': qty_init
+                }
+                st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
+                # -------------------------------------
+
+                save_inventory(); save_history(); st.success(f"已建立：{name}"); st.rerun()
 
     with tab4: # 📤 領用與出庫
         inv_o = st.session_state['inventory'].copy()
         if not inv_o.empty:
             inv_o['label'] = inv_o.apply(make_inventory_label, axis=1)
-            target = st.selectbox("選擇出庫商品 (含批號)", inv_o['label'].tolist(), key="t4_sel")
+            target = st.selectbox("選擇出庫商品", inv_o['label'].tolist(), key="t4_sel")
             idx = inv_o[inv_o['label'] == target].index[0]
             row = st.session_state['inventory'].loc[idx]
             cur_s = int(float(row['庫存(顆)']))
             with st.form("out_form"):
-                st.write(f"倉庫: **{row['倉庫']}** | 批號: **{row['批號']}** | 名稱: **{row['名稱']}**")
-                st.info(f"目前庫存: {cur_s}")
+                st.write(f"[{row['倉庫']}] {row['名稱']} | 批號:{row['批號']} | 存:{cur_s}")
                 qty_o = st.number_input("出庫數量", min_value=0, max_value=max(0, cur_s), value=0)
                 reason = st.selectbox("出庫類別", ["自用", "損壞", "樣品", "其他"])
-                note_out = st.text_area("詳細備註/說明")
+                note_out = st.text_area("備註")
                 if st.form_submit_button("確認出庫"):
                     if qty_o > 0:
                         st.session_state['inventory'].at[idx, '庫存(顆)'] -= qty_o
                         action_msg = f"領用出庫({reason})" + (f" - {note_out}" if note_out else "")
-                        
                         log = {
                             '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
                             '單號': 'OUT', '動作': action_msg, 
@@ -272,32 +255,32 @@ if page == "📦 庫存管理與進貨":
                             '數量變動': -qty_o
                         }
                         st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                        save_inventory(); save_history(); st.warning("已扣除庫存並記錄"); st.rerun()
+                        save_inventory(); save_history(); st.warning("已出庫"); st.rerun()
 
     with tab3: # 🛠️ 修改與盤點
         if not st.session_state['inventory'].empty:
             inv_e = st.session_state['inventory'].copy()
             inv_e['label'] = inv_e.apply(make_inventory_label, axis=1)
-            target = st.selectbox("選擇要修正的商品", inv_e['label'].tolist(), key="t3_sel")
+            target = st.selectbox("修正商品", inv_e['label'].tolist(), key="t3_sel")
             idx = inv_e[inv_e['label'] == target].index[0]
             orig = st.session_state['inventory'].loc[idx]
             val = int(float(orig['庫存(顆)']))
             with st.form("edit_manual_form"):
-                st.write(f"修正編號: **{orig['編號']}**")
+                st.write(f"修正: {orig['編號']} ({orig['名稱']})")
                 c1, c2, c3 = st.columns(3)
-                nm = c1.text_input("商品名稱修正", orig['名稱'])
-                wh = c2.selectbox("倉庫修正", DEFAULT_WAREHOUSES, index=DEFAULT_WAREHOUSES.index(orig['倉庫']) if orig['倉庫'] in DEFAULT_WAREHOUSES else 0)
-                bt = c3.text_input("批號修正", orig['批號']) 
+                nm = c1.text_input("名稱修正", orig['名稱'])
+                wh = c2.selectbox("倉庫", DEFAULT_WAREHOUSES, index=DEFAULT_WAREHOUSES.index(orig['倉庫']) if orig['倉庫'] in DEFAULT_WAREHOUSES else 0)
+                bt = c3.text_input("批號", orig['批號']) 
                 
                 c4, c5, c6 = st.columns(3)
-                wm = c4.number_input("寬度mm修正", value=float(orig['寬度mm']))
-                lm = c5.number_input("長度mm修正", value=float(orig['長度mm']))
-                qt = c6.number_input("盤點庫存量修正", min_value=min(0, val), value=val)
+                wm = c4.number_input("寬mm", value=float(orig['寬度mm']))
+                lm = c5.number_input("長mm", value=float(orig['長度mm']))
+                qt = c6.number_input("庫存修正", min_value=min(0, val), value=val)
                 
-                el = st.selectbox("五行修正", get_dynamic_options('五行', DEFAULT_ELEMENTS), index=0)
-                note_edit = st.text_area("修正原因備註")
+                el = st.selectbox("五行", get_dynamic_options('五行', DEFAULT_ELEMENTS), index=0)
+                note_edit = st.text_area("修正原因")
                 
-                if st.form_submit_button("💾 儲存盤點修正"):
+                if st.form_submit_button("儲存修正"):
                     st.session_state['inventory'].at[idx, '名稱'] = nm
                     st.session_state['inventory'].at[idx, '倉庫'] = wh
                     st.session_state['inventory'].at[idx, '批號'] = bt
@@ -316,13 +299,13 @@ if page == "📦 庫存管理與進貨":
                         '數量變動': (qt - val)
                     }
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                    save_inventory(); save_history(); st.success("修正已儲存"); st.rerun()
+                    save_inventory(); save_history(); st.success("已修正"); st.rerun()
             
             if st.button("🗑️ 刪除該商品"):
                 if st.session_state['admin_mode']:
                     st.session_state['inventory'] = st.session_state['inventory'].drop(idx).reset_index(drop=True)
                     save_inventory(); st.warning("已刪除"); st.rerun()
-                else: st.error("權限不足：需要主管密碼才能刪除")
+                else: st.error("權限不足")
         else: st.info("無資料")
 
     st.divider()
@@ -350,14 +333,14 @@ elif page == "📜 紀錄明細查詢":
     else: st.info("尚無紀錄")
 
 # ------------------------------------------
-# 頁面 C: 領料與設計單 (含雜支計算)
+# 頁面 C: 領料與設計單
 # ------------------------------------------
 elif page == "🧮 領料與設計單":
     st.subheader("🧮 作品設計/領料單")
     items = st.session_state['inventory'].copy()
     if not items.empty:
         items['lbl'] = items.apply(make_inventory_label, axis=1)
-        sel = st.selectbox("選擇材料 (請確認批號)", items['lbl'], key="design_sel")
+        sel = st.selectbox("選擇材料", items['lbl'], key="design_sel")
         idx = items[items['lbl'] == sel].index[0]
         cur_s = int(float(items.loc[idx, '庫存(顆)']))
         
@@ -367,10 +350,8 @@ elif page == "🧮 領料與設計單":
         if col1.button("⬇️ 加入清單"):
             if qty > 0:
                 st.session_state['current_design'].append({
-                    '編號':items.loc[idx, '編號'], 
-                    '批號':items.loc[idx, '批號'],
-                    '名稱':items.loc[idx, '名稱'], 
-                    '數量':qty
+                    '編號':items.loc[idx, '編號'], '批號':items.loc[idx, '批號'],
+                    '名稱':items.loc[idx, '名稱'], '數量':qty
                 })
                 st.rerun()
         
@@ -379,37 +360,31 @@ elif page == "🧮 領料與設計單":
             st.markdown("##### 🛒 領料清單")
             st.table(ddf)
             
-            # --- 新增：雜支/運費計算區域 ---
             st.markdown("---")
-            st.markdown("##### 💰 額外費用計算 (僅供紀錄，不影響庫存)")
+            st.markdown("##### 💰 額外費用計算")
             c_fee1, c_fee2, c_fee3 = st.columns(3)
             shipping_fee = c_fee1.number_input("🚚 運費", min_value=0, value=0, step=10)
-            misc_fee = c_fee2.number_input("📦 雜支/包材", min_value=0, value=0, step=10)
+            misc_fee = c_fee2.number_input("📦 雜支", min_value=0, value=0, step=10)
             total_fee = shipping_fee + misc_fee
             
-            c_fee3.metric(label="💵 額外費用總計", value=f"${total_fee}")
-            design_note = st.text_input("📝 領料單備註 (如：訂單編號、客戶名)")
+            c_fee3.metric(label="💵 費用總計", value=f"${total_fee}")
+            design_note = st.text_input("📝 備註")
 
             st.markdown("---")
             
-            if st.button("✅ 領出/售出 (自動扣庫存)"):
-                # 準備寫入歷史的備註訊息
+            if st.button("✅ 領出/售出"):
                 fee_note = f" (額外費用:${total_fee})" if total_fee > 0 else ""
                 user_note = f" [{design_note}]" if design_note else ""
                 
                 for x in st.session_state['current_design']:
                     mask = (st.session_state['inventory']['編號'] == x['編號']) & \
                            (st.session_state['inventory']['批號'] == x['批號'])
-                    
                     if mask.any():
                         target_idx = st.session_state['inventory'][mask].index[0]
                         st.session_state['inventory'].at[target_idx, '庫存(顆)'] -= x['數量']
-                        
                         log = {
                             '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                            '單號': 'DESIGN', 
-                            # 將費用與備註記錄在【動作】欄位
-                            '動作': f"設計單領出{user_note}{fee_note}", 
+                            '單號': 'DESIGN', '動作': f"設計單領出{user_note}{fee_note}", 
                             '倉庫': st.session_state['inventory'].at[target_idx, '倉庫'], 
                             '編號': x['編號'], '批號': x['批號'],
                             '分類': st.session_state['inventory'].at[target_idx, '分類'], 
@@ -424,5 +399,4 @@ elif page == "🧮 領料與設計單":
                 st.session_state['current_design'] = []; st.success("庫存已扣除"); st.rerun()
             
             if st.button("🗑️ 清空清單", type="secondary"):
-                st.session_state['current_design'] = []
-                st.rerun()
+                st.session_state['current_design'] = []; st.rerun()
