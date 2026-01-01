@@ -8,7 +8,7 @@ import time
 # 1. 核心設定
 # ==========================================
 
-# 新增 '批號' 欄位
+# 欄位設定 (含批號，無成本金額)
 COLUMNS = [
     '編號', '批號', '倉庫', '分類', '名稱', 
     '寬度mm', '長度mm', '形狀', '五行', 
@@ -18,7 +18,7 @@ COLUMNS = [
 
 SENSITIVE_COLUMNS = ['進貨廠商', '廠商']
 
-# 紀錄檔也加入 '批號'
+# 歷史紀錄欄位
 HISTORY_COLUMNS = [
     '紀錄時間', '單號', '動作', '倉庫', '批號', '編號', '分類', '名稱', '規格', 
     '廠商', '數量變動'
@@ -94,7 +94,7 @@ def make_inventory_label(row):
     sup = f" | {row.get('進貨廠商','')}" if st.session_state.get('admin_mode', False) else ""
     stock_val = int(float(row.get('庫存(顆)', 0)))
     
-    # 這裡加入【批號】顯示
+    # 加入【批號】顯示
     batch_str = f"【批:{row.get('批號', '無')}】"
     
     return f"[{row.get('倉庫','Imeng')}] {batch_str} {elem}{row.get('編號','')} | {row.get('名稱','')} | {row.get('形狀','')} ({sz}){sup} | 存:{stock_val}"
@@ -127,7 +127,7 @@ if 'history' not in st.session_state:
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
 
-st.title("💎 GemCraft 庫存管理系統 (批號管理版)")
+st.title("💎 GemCraft 庫存管理系統 (批號+雜支計算版)")
 
 with st.sidebar:
     st.header("🔑 權限驗證")
@@ -178,28 +178,22 @@ if page == "📦 庫存管理與進貨":
                 c1, c2 = st.columns(2)
                 qty = c1.number_input("進貨數量", min_value=1, value=1)
                 
-                # 重要：批號處理邏輯
                 restock_type = c2.radio("入庫方式", ["📦 建立新批號 (推薦)", "➕ 合併入此批號"], help="『建立新批號』會新增一列，方便區分不同時間進貨的同款商品")
                 
-                # 自動產生一個預設的新批號 (例如 20240101-A)
                 default_new_batch = f"{date.today().strftime('%Y%m%d')}-A"
                 new_batch_id = st.text_input("設定新批號", value=default_new_batch) if restock_type == "📦 建立新批號 (推薦)" else row['批號']
 
                 if st.form_submit_button("確認入庫"):
                     if restock_type == "➕ 合併入此批號":
-                        # 舊邏輯：直接加總
                         st.session_state['inventory'].at[idx, '庫存(顆)'] += qty
                         log_action = "補貨(合併)"
                         current_batch = row.get('批號', '無')
                     else:
-                        # 新邏輯：複製資料但建立新的一列 (Row)
                         new_row = row.copy()
                         new_row['庫存(顆)'] = qty
                         new_row['進貨數量(顆)'] = qty
                         new_row['進貨日期'] = date.today()
-                        new_row['批號'] = new_batch_id # 使用新的批號
-                        
-                        # 將新的一列加入資料庫
+                        new_row['批號'] = new_batch_id
                         st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_row])], ignore_index=True)
                         log_action = f"補貨(新批號)"
                         current_batch = new_batch_id
@@ -236,7 +230,6 @@ if page == "📦 庫存管理與進貨":
             sup = c5.selectbox("進貨廠商", get_dynamic_options('進貨廠商', DEFAULT_SUPPLIERS))
             if sup == "➕ 手動輸入/新增": sup = st.text_input("輸入自定義廠商")
             
-            # 新增：批號設定
             c7, c8 = st.columns(2)
             qty_init = c7.number_input("初始數量", min_value=1, value=1)
             batch_init = c8.text_input("初始批號", value=f"{date.today().strftime('%Y%m%d')}-01")
@@ -294,7 +287,7 @@ if page == "📦 庫存管理與進貨":
                 c1, c2, c3 = st.columns(3)
                 nm = c1.text_input("商品名稱修正", orig['名稱'])
                 wh = c2.selectbox("倉庫修正", DEFAULT_WAREHOUSES, index=DEFAULT_WAREHOUSES.index(orig['倉庫']) if orig['倉庫'] in DEFAULT_WAREHOUSES else 0)
-                bt = c3.text_input("批號修正", orig['批號']) # 開放修改批號
+                bt = c3.text_input("批號修正", orig['批號']) 
                 
                 c4, c5, c6 = st.columns(3)
                 wm = c4.number_input("寬度mm修正", value=float(orig['寬度mm']))
@@ -340,7 +333,6 @@ if page == "📦 庫存管理與進貨":
         st.table(sum_df.astype(int))
     vdf = st.session_state['inventory'].copy()
     if not vdf.empty:
-        # 如果不是管理員，隱藏廠商資訊
         if not st.session_state['admin_mode']:
             vdf = vdf.drop(columns=[c for c in SENSITIVE_COLUMNS if c in vdf.columns])
         st.dataframe(vdf, use_container_width=True)
@@ -358,14 +350,13 @@ elif page == "📜 紀錄明細查詢":
     else: st.info("尚無紀錄")
 
 # ------------------------------------------
-# 頁面 C: 領料與設計單
+# 頁面 C: 領料與設計單 (含雜支計算)
 # ------------------------------------------
 elif page == "🧮 領料與設計單":
     st.subheader("🧮 作品設計/領料單")
     items = st.session_state['inventory'].copy()
     if not items.empty:
         items['lbl'] = items.apply(make_inventory_label, axis=1)
-        # 這裡的下拉選單現在會包含批號，例如 "[Imeng] 【批:202401-A】 ST001..."
         sel = st.selectbox("選擇材料 (請確認批號)", items['lbl'], key="design_sel")
         idx = items[items['lbl'] == sel].index[0]
         cur_s = int(float(items.loc[idx, '庫存(顆)']))
@@ -388,9 +379,25 @@ elif page == "🧮 領料與設計單":
             st.markdown("##### 🛒 領料清單")
             st.table(ddf)
             
+            # --- 新增：雜支/運費計算區域 ---
+            st.markdown("---")
+            st.markdown("##### 💰 額外費用計算 (僅供紀錄，不影響庫存)")
+            c_fee1, c_fee2, c_fee3 = st.columns(3)
+            shipping_fee = c_fee1.number_input("🚚 運費", min_value=0, value=0, step=10)
+            misc_fee = c_fee2.number_input("📦 雜支/包材", min_value=0, value=0, step=10)
+            total_fee = shipping_fee + misc_fee
+            
+            c_fee3.metric(label="💵 額外費用總計", value=f"${total_fee}")
+            design_note = st.text_input("📝 領料單備註 (如：訂單編號、客戶名)")
+
+            st.markdown("---")
+            
             if st.button("✅ 領出/售出 (自動扣庫存)"):
+                # 準備寫入歷史的備註訊息
+                fee_note = f" (額外費用:${total_fee})" if total_fee > 0 else ""
+                user_note = f" [{design_note}]" if design_note else ""
+                
                 for x in st.session_state['current_design']:
-                    # 必須同時對應 編號 與 批號 才能扣對庫存
                     mask = (st.session_state['inventory']['編號'] == x['編號']) & \
                            (st.session_state['inventory']['批號'] == x['批號'])
                     
@@ -398,10 +405,11 @@ elif page == "🧮 領料與設計單":
                         target_idx = st.session_state['inventory'][mask].index[0]
                         st.session_state['inventory'].at[target_idx, '庫存(顆)'] -= x['數量']
                         
-                        # 自動記錄到歷史
                         log = {
                             '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                            '單號': 'DESIGN', '動作': '設計單領出', 
+                            '單號': 'DESIGN', 
+                            # 將費用與備註記錄在【動作】欄位
+                            '動作': f"設計單領出{user_note}{fee_note}", 
                             '倉庫': st.session_state['inventory'].at[target_idx, '倉庫'], 
                             '編號': x['編號'], '批號': x['批號'],
                             '分類': st.session_state['inventory'].at[target_idx, '分類'], 
