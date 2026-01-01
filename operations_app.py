@@ -102,7 +102,7 @@ if 'history' not in st.session_state:
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
 
-st.title("💎 GemCraft 庫存管理系統")
+st.title("💎 GemCraft 庫存管理系統 (v3.4 修正版)")
 
 with st.sidebar:
     st.header("🔑 權限驗證")
@@ -189,17 +189,28 @@ if page == "📦 庫存管理與進貨":
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
             cat = c2.selectbox("分類", ["天然石", "配件", "耗材"])
             
-            # --- 🔴 重點修正區塊：名稱下拉選單 ---
-            # 取得現有名稱列表
-            name_opts = get_dynamic_options('名稱', []) 
+            # --- 🔴 修正：強制顯示庫存中的名稱選單 ---
+            # 直接讀取目前的庫存，確保抓到最新的名稱列表
+            current_inv = st.session_state['inventory']
+            if not current_inv.empty:
+                # 抓取不重複的名稱，並排除空值
+                exist_names = current_inv['名稱'].dropna().unique().tolist()
+                exist_names = sorted([x for x in exist_names if str(x).strip() != ''])
+            else:
+                exist_names = []
             
-            # 使用 selectbox 顯示，若選擇手動輸入，則在下方顯示 text_input
-            name_sel = c3.selectbox("名稱 (可輸入篩選)", name_opts)
+            # 建立選單選項
+            name_options = ["➕ 手動輸入/新增"] + exist_names
+            
+            # 使用 selectbox
+            name_sel = c3.selectbox("名稱 (選現有或新增)", name_options, help="選擇『手動輸入/新增』可輸入新名字")
+            
+            # 如果選了手動輸入，則顯示文字框
             if name_sel == "➕ 手動輸入/新增":
-                name = c3.text_input("請輸入新商品名稱", key="new_name_input")
+                name = c3.text_input("輸入新名稱", placeholder="例如：白水晶")
             else:
                 name = name_sel
-            # -----------------------------------
+            # ---------------------------------------
             
             s1, s2, s3 = st.columns(3)
             w_mm = s1.number_input("寬度 (mm)", min_value=0.0, step=0.1, value=0.0)
