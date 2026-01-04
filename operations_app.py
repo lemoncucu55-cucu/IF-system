@@ -102,7 +102,7 @@ if 'history' not in st.session_state:
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
 
-st.title("💎 GemCraft 庫存管理系統 (v3.4 修正版)")
+st.title("💎 GemCraft 庫存管理系統 (v3.5 修正版)")
 
 with st.sidebar:
     st.header("🔑 權限驗證")
@@ -149,7 +149,9 @@ if page == "📦 庫存管理與進貨":
             row = inv.loc[idx]
             
             with st.form("restock_form"):
-                st.info(f"商品：{row['名稱']} | 批號：{row['批號']}")
+                # 🔴 修正：將形狀、五行加回顯示資訊中
+                st.info(f"商品：{row['名稱']} | 規格：{row['形狀']} {format_size(row)} | 五行：{row['五行']} | 批號：{row['批號']}")
+                
                 c1, c2 = st.columns(2)
                 qty = c1.number_input("進貨數量", min_value=1, value=1)
                 restock_type = c2.radio("入庫方式", ["📦 建立新批號", "➕ 合併入此批號"])
@@ -189,7 +191,7 @@ if page == "📦 庫存管理與進貨":
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
             cat = c2.selectbox("分類", ["天然石", "配件", "耗材"])
             
-            # --- 修正：強制顯示庫存中的名稱選單 ---
+            # 強制顯示庫存中的名稱選單
             current_inv = st.session_state['inventory']
             if not current_inv.empty:
                 exist_names = current_inv['名稱'].dropna().unique().tolist()
@@ -198,7 +200,6 @@ if page == "📦 庫存管理與進貨":
                 exist_names = []
             
             name_options = ["➕ 手動輸入/新增"] + exist_names
-            
             name_sel = c3.selectbox("名稱 (選現有或新增)", name_options, help="選擇『手動輸入/新增』可輸入新名字")
             
             if name_sel == "➕ 手動輸入/新增":
@@ -255,9 +256,10 @@ if page == "📦 庫存管理與進貨":
             row = st.session_state['inventory'].loc[idx]
             cur_s = int(float(row['庫存(顆)']))
             with st.form("out_form"):
-                st.write(f"[{row['倉庫']}] {row['名稱']} | 批號:{row['批號']} | 存:{cur_s}")
+                # 🔴 修正：將形狀、五行等詳細資訊加回顯示中
+                st.write(f"[{row['倉庫']}] {row['名稱']} | {row['形狀']} ({format_size(row)}) | 五行:{row['五行']} | 批號:{row['批號']} | 存:{cur_s}")
+                
                 qty_o = st.number_input("出庫數量", min_value=0, max_value=max(0, cur_s), value=0)
-                # 🔴 修正處：這裡的縮排已經對齊
                 reason = st.selectbox("出庫類別", ["商品", "自用", "損壞", "樣品", "其他"])
                 note_out = st.text_area("備註")
                 if st.form_submit_button("確認出庫"):
