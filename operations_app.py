@@ -46,28 +46,20 @@ def save_history():
     except Exception: pass
 
 def robust_import_inventory(df):
-    # 1. 先清理欄位名稱 (移除隱形空白)
     df.columns = df.columns.astype(str).str.strip().str.replace('\ufeff', '')
-    
-    # 2. 移除舊系統可能殘留的 label 欄位
     if 'label' in df.columns: df = df.drop(columns=['label'])
-    
-    # 3. 補齊缺失欄位
     if '批號' not in df.columns: df['批號'] = '初始存貨'
     if '倉庫' not in df.columns: df.insert(1, '倉庫', 'Imeng')
     for col in COLUMNS:
         if col not in df.columns: df[col] = ""
-            
-    # 4. 只保留標準欄位
     df = df[COLUMNS].copy()
     
-    # 5. 強力清洗：將所有欄位轉為文字後，移除 'nan', 'NaN'
+    # 強力清洗
+    df = df.fillna("")
     for col in df.columns:
         df[col] = df[col].astype(str).str.strip()
-        # 把各種奇怪的空值寫法都變成真正的空字串
         df[col] = df[col].replace(['nan', 'NaN', 'None', 'NAT', '<NA>'], "")
     
-    # 6. 最後才將數值欄位轉回數字 (失敗則變0)
     for col in ['寬度mm', '長度mm', '進貨數量(顆)', '庫存(顆)']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
@@ -85,14 +77,14 @@ def format_size(row):
 def make_inventory_label(row):
     sz = format_size(row)
     
-    # 取得文字並去除空白
-    elem_val = str(row.get('五行', '')).strip()
-    if elem_val.lower() == 'nan': elem_val = ''
+    def clean_str(val):
+        s = str(val).strip()
+        if s.lower() in ['nan', 'none', '']: return ""
+        return s
+
+    elem_val = clean_str(row.get('五行', ''))
+    shape_val = clean_str(row.get('形狀', ''))
     
-    shape_val = str(row.get('形狀', '')).strip()
-    if shape_val.lower() == 'nan': shape_val = ''
-    
-    # 組合顯示
     elem_display = f"({elem_val})" if elem_val else ""
     shape_display = shape_val if shape_val else ""
     
@@ -100,13 +92,11 @@ def make_inventory_label(row):
     stock_val = int(float(row.get('庫存(顆)', 0)))
     batch_str = f"【批:{row.get('批號', '無')}】"
     
-    # [倉庫] 【批號】 (五行)編號 | 名稱 | 形狀 (尺寸) | 存:99
     return f"[{row.get('倉庫','Imeng')}] {batch_str} {elem_display}{row.get('編號','')} | {row.get('名稱','')} | {shape_display} ({sz}){sup} | 存:{stock_val}"
 
 def get_dynamic_options(col, defaults):
     opts = set(defaults)
     if not st.session_state['inventory'].empty:
-        # 強力過濾掉 nan
         raw_list = st.session_state['inventory'][col].astype(str).tolist()
         clean_list = [x.strip() for x in raw_list if x.strip() and x.lower() != 'nan']
         opts.update(clean_list)
@@ -121,7 +111,6 @@ st.set_page_config(page_title="GemCraft 庫存管理系統", layout="wide")
 if 'inventory' not in st.session_state:
     if os.path.exists(DEFAULT_CSV_FILE):
         try: 
-            # 🔴 修正：使用 keep_default_na=False 防止 Pandas 把空白讀成 NaN
             df_raw = pd.read_csv(DEFAULT_CSV_FILE, encoding='utf-8-sig', keep_default_na=False)
             st.session_state['inventory'] = robust_import_inventory(df_raw)
         except: st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
@@ -136,7 +125,7 @@ if 'history' not in st.session_state:
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
 
-st.title("💎 GemCraft 庫存管理系統 (v3.7 終極修正版)")
+st.title("💎 GemCraft 庫存管理系統 (v3.9 訂單增強版)")
 
 with st.sidebar:
     st.header("🔑 權限驗證")
@@ -159,14 +148,14 @@ with st.sidebar:
     uploaded_file = st.file_uploader("📤 上傳資料修正位移", type=['csv'])
     if uploaded_file and st.button("🚨 執行修正匯入"):
         try:
-            # 🔴 修正：上傳時也使用 keep_default_na=False
             df = pd.read_csv(uploaded_file, encoding='utf-8-sig', keep_default_na=False)
             st.session_state['inventory'] = robust_import_inventory(df)
             save_inventory(); st.success("資料已匯入並清洗完畢！"); time.sleep(1); st.rerun()
         except Exception as e: st.error(f"匯入失敗: {e}")
 
-    if st.button("🔴 重置系統", type="secondary"):
-        st.session_state.clear(); st.rerun()
+    if st.button("🔴 重置系統 (清除快取)", type="secondary"):
+        st.session_state.clear()
+        st.rerun()
 
 # ------------------------------------------
 # 頁面 A: 庫存管理
@@ -184,9 +173,12 @@ if page == "📦 庫存管理與進貨":
             row = inv.loc[idx]
             
             with st.form("restock_form"):
-                # 🔴 修正：明確顯示資訊
-                shape_show = row['形狀'] if row['形狀'] else "(無形狀)"
-                elem_show = row['五行'] if row['五行'] else "(無五行)"
+                def clean_show(val):
+                    s = str(val).strip()
+                    return s if s and s.lower() != 'nan' else "(無)"
+                shape_show = clean_show(row['形狀'])
+                elem_show = clean_show(row['五行'])
+                
                 st.info(f"商品：{row['名稱']} | 規格：{shape_show} {format_size(row)} | 五行：{elem_show} | 批號：{row['批號']}")
                 
                 c1, c2 = st.columns(2)
@@ -228,18 +220,15 @@ if page == "📦 庫存管理與進貨":
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
             cat = c2.selectbox("分類", ["天然石", "配件", "耗材"])
             
-            # 名稱選單
             current_inv = st.session_state['inventory']
             if not current_inv.empty:
-                # 過濾空白名稱
                 exist_names = current_inv['名稱'].astype(str).tolist()
-                exist_names = sorted(list(set([x.strip() for x in exist_names if x.strip()])))
+                exist_names = sorted(list(set([x.strip() for x in exist_names if x.strip() and x.lower() != 'nan'])))
             else:
                 exist_names = []
             
             name_options = ["➕ 手動輸入/新增"] + exist_names
             name_sel = c3.selectbox("名稱 (選現有或新增)", name_options)
-            
             if name_sel == "➕ 手動輸入/新增":
                 name = c3.text_input("輸入新名稱", placeholder="例如：白水晶")
             else:
@@ -293,9 +282,11 @@ if page == "📦 庫存管理與進貨":
             row = st.session_state['inventory'].loc[idx]
             cur_s = int(float(row['庫存(顆)']))
             with st.form("out_form"):
-                # 顯示詳細資訊 (處理空值)
-                shape_d = row['形狀'] if row['形狀'] else ""
-                elem_d = row['五行'] if row['五行'] else ""
+                def clean_show(val):
+                    s = str(val).strip()
+                    return s if s and s.lower() != 'nan' else ""
+                shape_d = clean_show(row['形狀'])
+                elem_d = clean_show(row['五行'])
                 
                 st.write(f"[{row['倉庫']}] {row['名稱']} | {shape_d} ({format_size(row)}) | {elem_d} | 批號:{row['批號']} | 存:{cur_s}")
                 
@@ -421,20 +412,31 @@ elif page == "🧮 領料與設計單":
             st.table(ddf)
             
             st.markdown("---")
-            st.markdown("##### 💰 額外費用計算")
+            st.markdown("##### 💰 訂單與費用確認")
+            
+            # --- 🔴 新增：訂單單號與備註 ---
+            # 自動產生一組預設單號
+            default_order_id = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
+            order_number = st.text_input("📄 訂單單號 (Order ID)", value=default_order_id, help="可手動修改為蝦皮單號或客戶名稱")
+            # ---------------------------
+            
             c_fee1, c_fee2, c_fee3 = st.columns(3)
             shipping_fee = c_fee1.number_input("🚚 運費", min_value=0, value=0, step=10)
             misc_fee = c_fee2.number_input("📦 雜支", min_value=0, value=0, step=10)
             total_fee = shipping_fee + misc_fee
             
             c_fee3.metric(label="💵 費用總計", value=f"${total_fee}")
-            design_note = st.text_input("📝 備註")
+            
+            design_remark = st.text_area("📝 整單備註 (Notes)", placeholder="例如：客戶林小姐 / 訂製手鍊 x 2")
 
             st.markdown("---")
             
-            if st.button("✅ 領出/售出"):
-                fee_note = f" (額外費用:${total_fee})" if total_fee > 0 else ""
-                user_note = f" [{design_note}]" if design_note else ""
+            if st.button("✅ 確認領出 (扣庫存)"):
+                fee_note = f" (費用:${total_fee})" if total_fee > 0 else ""
+                remark_note = f" [備註: {design_remark}]" if design_remark else ""
+                
+                # 若使用者沒填單號，就用預設的
+                final_order_id = order_number if order_number.strip() else "DESIGN"
                 
                 for x in st.session_state['current_design']:
                     mask = (st.session_state['inventory']['編號'] == x['編號']) & \
@@ -444,7 +446,9 @@ elif page == "🧮 領料與設計單":
                         st.session_state['inventory'].at[target_idx, '庫存(顆)'] -= x['數量']
                         log = {
                             '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                            '單號': 'DESIGN', '動作': f"設計單領出{user_note}{fee_note}", 
+                            # 🔴 將輸入的單號寫入紀錄
+                            '單號': final_order_id, 
+                            '動作': f"設計單領出{remark_note}{fee_note}", 
                             '倉庫': st.session_state['inventory'].at[target_idx, '倉庫'], 
                             '編號': x['編號'], '批號': x['批號'],
                             '分類': st.session_state['inventory'].at[target_idx, '分類'], 
@@ -456,7 +460,7 @@ elif page == "🧮 領料與設計單":
                         st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                 
                 save_inventory(); save_history()
-                st.session_state['current_design'] = []; st.success("庫存已扣除"); st.rerun()
+                st.session_state['current_design'] = []; st.success(f"訂單 {final_order_id} 已完成！"); st.rerun()
             
             if st.button("🗑️ 清空清單", type="secondary"):
                 st.session_state['current_design'] = []; st.rerun()
