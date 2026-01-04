@@ -46,19 +46,24 @@ def save_history():
     except Exception: pass
 
 def robust_import_inventory(df):
+    # 1. 清理欄位
     df.columns = df.columns.astype(str).str.strip().str.replace('\ufeff', '')
     if 'label' in df.columns: df = df.drop(columns=['label'])
+    
+    # 2. 補齊欄位
     if '批號' not in df.columns: df['批號'] = '初始存貨'
     if '倉庫' not in df.columns: df.insert(1, '倉庫', 'Imeng')
     for col in COLUMNS:
         if col not in df.columns: df[col] = ""
     df = df[COLUMNS].copy()
     
+    # 3. 強力清洗：轉文字並移除 nan
     df = df.fillna("")
     for col in df.columns:
         df[col] = df[col].astype(str).str.strip()
         df[col] = df[col].replace(['nan', 'NaN', 'None', 'NAT', '<NA>'], "")
     
+    # 4. 數值轉換
     for col in ['寬度mm', '長度mm', '進貨數量(顆)', '庫存(顆)']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
@@ -76,6 +81,7 @@ def format_size(row):
 def make_inventory_label(row):
     sz = format_size(row)
     
+    # 顯示層清洗
     def clean_str(val):
         s = str(val).strip()
         if s.lower() in ['nan', 'none', '']: return ""
@@ -84,6 +90,7 @@ def make_inventory_label(row):
     elem_val = clean_str(row.get('五行', ''))
     shape_val = clean_str(row.get('形狀', ''))
     
+    # 有值才顯示
     elem_display = f"({elem_val})" if elem_val else ""
     shape_display = shape_val if shape_val else ""
     
@@ -91,6 +98,7 @@ def make_inventory_label(row):
     stock_val = int(float(row.get('庫存(顆)', 0)))
     batch_str = f"【批:{row.get('批號', '無')}】"
     
+    # 組合標籤
     return f"[{row.get('倉庫','Imeng')}] {batch_str} {elem_display}{row.get('編號','')} | {row.get('名稱','')} | {shape_display} ({sz}){sup} | 存:{stock_val}"
 
 def get_dynamic_options(col, defaults):
@@ -110,6 +118,7 @@ st.set_page_config(page_title="GemCraft 庫存管理系統", layout="wide")
 if 'inventory' not in st.session_state:
     if os.path.exists(DEFAULT_CSV_FILE):
         try: 
+            # keep_default_na=False 這是關鍵，防止讀取時產生 NaN
             df_raw = pd.read_csv(DEFAULT_CSV_FILE, encoding='utf-8-sig', keep_default_na=False)
             st.session_state['inventory'] = robust_import_inventory(df_raw)
         except: st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
@@ -124,13 +133,13 @@ if 'history' not in st.session_state:
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
 
-# 初始化訂單變數 (僅在第一次載入時執行)
+# 初始化訂單變數 (避免重整消失)
 if 'order_id_input' not in st.session_state: 
     st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: 
     st.session_state['order_note_input'] = ""
 
-st.title("💎 GemCraft 庫存管理系統 (v4.1 單號強制修正版)")
+st.title("💎 GemCraft 庫存管理系統 (v4.2 最終確認版)")
 
 with st.sidebar:
     st.header("🔑 權限驗證")
@@ -178,6 +187,7 @@ if page == "📦 庫存管理與進貨":
             row = inv.loc[idx]
             
             with st.form("restock_form"):
+                # 顯示資訊清洗
                 def clean_show(val):
                     s = str(val).strip()
                     return s if s and s.lower() != 'nan' else "(無)"
@@ -234,6 +244,7 @@ if page == "📦 庫存管理與進貨":
             
             name_options = ["➕ 手動輸入/新增"] + exist_names
             name_sel = c3.selectbox("名稱 (選現有或新增)", name_options)
+            
             if name_sel == "➕ 手動輸入/新增":
                 name = c3.text_input("輸入新名稱", placeholder="例如：白水晶")
             else:
@@ -389,16 +400,17 @@ elif page == "📜 紀錄明細查詢":
     else: st.info("尚無紀錄")
 
 # ------------------------------------------
-# 頁面 C: 領料與設計單 (v4.1 修正版)
+# 頁面 C: 領料與設計單 (v4.2 最終版)
 # ------------------------------------------
 elif page == "🧮 領料與設計單":
     st.subheader("🧮 作品設計/領料單")
     
-    # 1. 訂單資訊 (綁定 key 以保存輸入狀態)
+    # 1. 訂單資訊 (輸入後自動存入變數，不需按 Enter)
     st.markdown("##### 📝 訂單基本資訊")
     c_ord1, c_ord2 = st.columns([1, 2])
-    # 🔴 關鍵：這裡綁定了 key='order_id_input'
-    order_id_val = c_ord1.text_input("📄 訂單單號 (Order ID)", key='order_id_input', help="可手動修改，作為歷史紀錄的單號")
+    
+    # 使用 key 綁定 session_state
+    order_id_val = c_ord1.text_input("📄 訂單單號 (Order ID)", key='order_id_input', help="可手動修改")
     order_note_val = c_ord2.text_input("📝 整單備註 (Notes)", key='order_note_input', placeholder="例如：客戶林小姐")
     
     st.markdown("---")
@@ -443,11 +455,11 @@ elif page == "🧮 領料與設計單":
             if st.button("✅ 確認領出 (扣庫存)"):
                 fee_note = f" (費用:${total_fee})" if total_fee > 0 else ""
                 
-                # --- 🔴 關鍵修正：直接抓取變數值，不依賴 session state 的更新延遲 ---
-                final_order_id = order_id_val.strip() if order_id_val.strip() else f"DES-{date.today().strftime('%Y%m%d')}"
-                final_note = order_note_val.strip()
+                # --- 🔴 最終確認：直接抓取當下變數，不使用 session state 避免延遲 ---
+                final_order_id = order_id_val.strip() if order_id_val and order_id_val.strip() else f"DES-{date.today().strftime('%Y%m%d')}"
+                final_note = order_note_val.strip() if order_note_val else ""
                 remark_note = f" [備註: {final_note}]" if final_note else ""
-                # -------------------------------------------------------------
+                # -----------------------------------------------------------------
                 
                 for x in st.session_state['current_design']:
                     mask = (st.session_state['inventory']['編號'] == x['編號']) & \
@@ -471,7 +483,7 @@ elif page == "🧮 領料與設計單":
                 
                 save_inventory(); save_history()
                 
-                # 清空清單並重置訂單號
+                # 重置狀態
                 st.session_state['current_design'] = []
                 st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
                 st.session_state['order_note_input'] = ""
