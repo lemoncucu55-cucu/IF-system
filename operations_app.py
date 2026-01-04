@@ -124,8 +124,13 @@ if 'history' not in st.session_state:
 
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
+# 初始化訂單變數，避免重整後消失
+if 'order_id_input' not in st.session_state: 
+    st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
+if 'order_note_input' not in st.session_state: 
+    st.session_state['order_note_input'] = ""
 
-st.title("💎 GemCraft 庫存管理系統 (v3.9 訂單增強版)")
+st.title("💎 GemCraft 庫存管理系統 (v4.0 訂單置頂版)")
 
 with st.sidebar:
     st.header("🔑 權限驗證")
@@ -384,10 +389,23 @@ elif page == "📜 紀錄明細查詢":
     else: st.info("尚無紀錄")
 
 # ------------------------------------------
-# 頁面 C: 領料與設計單
+# 頁面 C: 領料與設計單 (v4.0 修正版)
 # ------------------------------------------
 elif page == "🧮 領料與設計單":
     st.subheader("🧮 作品設計/領料單")
+    
+    # --- 🔴 1. 訂單資訊 (置頂區) ---
+    st.markdown("##### 📝 訂單基本資訊")
+    
+    # 綁定 session_state，確保重新整理後值還在
+    c_ord1, c_ord2 = st.columns([1, 2])
+    order_id = c_ord1.text_input("📄 訂單單號 (Order ID)", key='order_id_input', help="可手動修改，作為歷史紀錄的單號")
+    order_note = c_ord2.text_input("📝 整單備註 (Notes)", key='order_note_input', placeholder="例如：客戶林小姐")
+    
+    st.markdown("---")
+    
+    # --- 🔴 2. 選擇材料 ---
+    st.markdown("##### ➕ 加入材料")
     items = st.session_state['inventory'].copy()
     if not items.empty:
         items['lbl'] = items.apply(make_inventory_label, axis=1)
@@ -406,37 +424,27 @@ elif page == "🧮 領料與設計單":
                 })
                 st.rerun()
         
+        # --- 🔴 3. 清單與結算 ---
         if st.session_state['current_design']:
+            st.markdown("---")
             ddf = pd.DataFrame(st.session_state['current_design'])
-            st.markdown("##### 🛒 領料清單")
+            st.markdown(f"##### 🛒 領料清單 ({len(ddf)} 項)")
             st.table(ddf)
             
-            st.markdown("---")
-            st.markdown("##### 💰 訂單與費用確認")
-            
-            # --- 🔴 新增：訂單單號與備註 ---
-            # 自動產生一組預設單號
-            default_order_id = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
-            order_number = st.text_input("📄 訂單單號 (Order ID)", value=default_order_id, help="可手動修改為蝦皮單號或客戶名稱")
-            # ---------------------------
-            
+            st.markdown("##### 💰 額外費用")
             c_fee1, c_fee2, c_fee3 = st.columns(3)
             shipping_fee = c_fee1.number_input("🚚 運費", min_value=0, value=0, step=10)
             misc_fee = c_fee2.number_input("📦 雜支", min_value=0, value=0, step=10)
             total_fee = shipping_fee + misc_fee
             
             c_fee3.metric(label="💵 費用總計", value=f"${total_fee}")
-            
-            design_remark = st.text_area("📝 整單備註 (Notes)", placeholder="例如：客戶林小姐 / 訂製手鍊 x 2")
 
             st.markdown("---")
             
             if st.button("✅ 確認領出 (扣庫存)"):
                 fee_note = f" (費用:${total_fee})" if total_fee > 0 else ""
-                remark_note = f" [備註: {design_remark}]" if design_remark else ""
-                
-                # 若使用者沒填單號，就用預設的
-                final_order_id = order_number if order_number.strip() else "DESIGN"
+                remark_note = f" [備註: {st.session_state['order_note_input']}]" if st.session_state['order_note_input'] else ""
+                final_order_id = st.session_state['order_id_input'] if st.session_state['order_id_input'].strip() else "DESIGN"
                 
                 for x in st.session_state['current_design']:
                     mask = (st.session_state['inventory']['編號'] == x['編號']) & \
@@ -446,7 +454,6 @@ elif page == "🧮 領料與設計單":
                         st.session_state['inventory'].at[target_idx, '庫存(顆)'] -= x['數量']
                         log = {
                             '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                            # 🔴 將輸入的單號寫入紀錄
                             '單號': final_order_id, 
                             '動作': f"設計單領出{remark_note}{fee_note}", 
                             '倉庫': st.session_state['inventory'].at[target_idx, '倉庫'], 
@@ -460,7 +467,12 @@ elif page == "🧮 領料與設計單":
                         st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                 
                 save_inventory(); save_history()
-                st.session_state['current_design'] = []; st.success(f"訂單 {final_order_id} 已完成！"); st.rerun()
+                
+                # 清空清單並重置訂單號
+                st.session_state['current_design'] = []
+                st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
+                st.session_state['order_note_input'] = ""
+                st.success(f"訂單 {final_order_id} 已完成！"); st.rerun()
             
             if st.button("🗑️ 清空清單", type="secondary"):
                 st.session_state['current_design'] = []; st.rerun()
