@@ -54,7 +54,6 @@ def robust_import_inventory(df):
         if col not in df.columns: df[col] = ""
     df = df[COLUMNS].copy()
     
-    # 強力清洗
     df = df.fillna("")
     for col in df.columns:
         df[col] = df[col].astype(str).str.strip()
@@ -124,13 +123,14 @@ if 'history' not in st.session_state:
 
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
-# 初始化訂單變數，避免重整後消失
+
+# 初始化訂單變數 (僅在第一次載入時執行)
 if 'order_id_input' not in st.session_state: 
     st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: 
     st.session_state['order_note_input'] = ""
 
-st.title("💎 GemCraft 庫存管理系統 (v4.0 訂單置頂版)")
+st.title("💎 GemCraft 庫存管理系統 (v4.1 單號強制修正版)")
 
 with st.sidebar:
     st.header("🔑 權限驗證")
@@ -389,22 +389,21 @@ elif page == "📜 紀錄明細查詢":
     else: st.info("尚無紀錄")
 
 # ------------------------------------------
-# 頁面 C: 領料與設計單 (v4.0 修正版)
+# 頁面 C: 領料與設計單 (v4.1 修正版)
 # ------------------------------------------
 elif page == "🧮 領料與設計單":
     st.subheader("🧮 作品設計/領料單")
     
-    # --- 🔴 1. 訂單資訊 (置頂區) ---
+    # 1. 訂單資訊 (綁定 key 以保存輸入狀態)
     st.markdown("##### 📝 訂單基本資訊")
-    
-    # 綁定 session_state，確保重新整理後值還在
     c_ord1, c_ord2 = st.columns([1, 2])
-    order_id = c_ord1.text_input("📄 訂單單號 (Order ID)", key='order_id_input', help="可手動修改，作為歷史紀錄的單號")
-    order_note = c_ord2.text_input("📝 整單備註 (Notes)", key='order_note_input', placeholder="例如：客戶林小姐")
+    # 🔴 關鍵：這裡綁定了 key='order_id_input'
+    order_id_val = c_ord1.text_input("📄 訂單單號 (Order ID)", key='order_id_input', help="可手動修改，作為歷史紀錄的單號")
+    order_note_val = c_ord2.text_input("📝 整單備註 (Notes)", key='order_note_input', placeholder="例如：客戶林小姐")
     
     st.markdown("---")
     
-    # --- 🔴 2. 選擇材料 ---
+    # 2. 選擇材料
     st.markdown("##### ➕ 加入材料")
     items = st.session_state['inventory'].copy()
     if not items.empty:
@@ -424,7 +423,7 @@ elif page == "🧮 領料與設計單":
                 })
                 st.rerun()
         
-        # --- 🔴 3. 清單與結算 ---
+        # 3. 清單與結算
         if st.session_state['current_design']:
             st.markdown("---")
             ddf = pd.DataFrame(st.session_state['current_design'])
@@ -443,8 +442,12 @@ elif page == "🧮 領料與設計單":
             
             if st.button("✅ 確認領出 (扣庫存)"):
                 fee_note = f" (費用:${total_fee})" if total_fee > 0 else ""
-                remark_note = f" [備註: {st.session_state['order_note_input']}]" if st.session_state['order_note_input'] else ""
-                final_order_id = st.session_state['order_id_input'] if st.session_state['order_id_input'].strip() else "DESIGN"
+                
+                # --- 🔴 關鍵修正：直接抓取變數值，不依賴 session state 的更新延遲 ---
+                final_order_id = order_id_val.strip() if order_id_val.strip() else f"DES-{date.today().strftime('%Y%m%d')}"
+                final_note = order_note_val.strip()
+                remark_note = f" [備註: {final_note}]" if final_note else ""
+                # -------------------------------------------------------------
                 
                 for x in st.session_state['current_design']:
                     mask = (st.session_state['inventory']['編號'] == x['編號']) & \
