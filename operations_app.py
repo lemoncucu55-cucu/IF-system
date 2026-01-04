@@ -53,9 +53,17 @@ def robust_import_inventory(df):
     for col in COLUMNS:
         if col not in df.columns: df[col] = ""
     df = df[COLUMNS].copy()
+    
+    # 數值欄位：轉數字，失敗填 0
     for col in ['寬度mm', '長度mm', '進貨數量(顆)', '庫存(顆)']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    df['批號'] = df['批號'].astype(str)
+        
+    # --- 🔴 修正重點：文字欄位強力清洗 ---
+    # 將所有可能的空值 (NaN, None, "nan") 都轉成空字串 ""
+    str_cols = ['編號', '批號', '倉庫', '分類', '名稱', '形狀', '五行', '進貨廠商']
+    for col in str_cols:
+        df[col] = df[col].astype(str).replace(['nan', 'NaN', 'None'], "").strip()
+        
     return df
 
 def format_size(row):
@@ -68,11 +76,20 @@ def format_size(row):
 
 def make_inventory_label(row):
     sz = format_size(row)
-    elem = f"({row.get('五行','')})" if row.get('五行','') else ""
+    
+    # 處理五行顯示：如果有值才加括號
+    elem_val = row.get('五行', '').strip()
+    elem = f"({elem_val})" if elem_val else ""
+    
+    # 處理形狀顯示
+    shape_val = row.get('形狀', '').strip()
+    
     sup = f" | {row.get('進貨廠商','')}" if st.session_state.get('admin_mode', False) else ""
     stock_val = int(float(row.get('庫存(顆)', 0)))
     batch_str = f"【批:{row.get('批號', '無')}】"
-    return f"[{row.get('倉庫','Imeng')}] {batch_str} {elem}{row.get('編號','')} | {row.get('名稱','')} | {row.get('形狀','')} ({sz}){sup} | 存:{stock_val}"
+    
+    # 組合顯示字串
+    return f"[{row.get('倉庫','Imeng')}] {batch_str} {elem}{row.get('編號','')} | {row.get('名稱','')} | {shape_val} ({sz}){sup} | 存:{stock_val}"
 
 def get_dynamic_options(col, defaults):
     opts = set(defaults)
@@ -102,7 +119,7 @@ if 'history' not in st.session_state:
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
 
-st.title("💎 GemCraft 庫存管理系統 (v3.5 修正版)")
+st.title("💎 GemCraft 庫存管理系統 (v3.6 修正版)")
 
 with st.sidebar:
     st.header("🔑 權限驗證")
@@ -149,7 +166,7 @@ if page == "📦 庫存管理與進貨":
             row = inv.loc[idx]
             
             with st.form("restock_form"):
-                # 🔴 修正：將形狀、五行加回顯示資訊中
+                # 顯示清洗後的乾淨資訊
                 st.info(f"商品：{row['名稱']} | 規格：{row['形狀']} {format_size(row)} | 五行：{row['五行']} | 批號：{row['批號']}")
                 
                 c1, c2 = st.columns(2)
@@ -256,8 +273,8 @@ if page == "📦 庫存管理與進貨":
             row = st.session_state['inventory'].loc[idx]
             cur_s = int(float(row['庫存(顆)']))
             with st.form("out_form"):
-                # 🔴 修正：將形狀、五行等詳細資訊加回顯示中
-                st.write(f"[{row['倉庫']}] {row['名稱']} | {row['形狀']} ({format_size(row)}) | 五行:{row['五行']} | 批號:{row['批號']} | 存:{cur_s}")
+                # 顯示完整資訊，不顯示 nan
+                st.write(f"[{row['倉庫']}] {row['名稱']} | {row['形狀']} ({format_size(row)}) | {row['五行']} | 批號:{row['批號']} | 存:{cur_s}")
                 
                 qty_o = st.number_input("出庫數量", min_value=0, max_value=max(0, cur_s), value=0)
                 reason = st.selectbox("出庫類別", ["商品", "自用", "損壞", "樣品", "其他"])
