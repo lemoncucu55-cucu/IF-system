@@ -12,7 +12,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 SHEET_NAME = "IFcrystal_inventory"
 KEY_FILE = "google_key.json"
 
-# v7.0 新增 '成本單價'
 COLUMNS = [
     '編號', '批號', '倉庫', '分類', '名稱', 
     '寬度mm', '長度mm', '形狀', '五行', 
@@ -56,7 +55,6 @@ def robust_import_inventory(df):
     for col in df.columns:
         df[col] = df[col].astype(str).str.strip()
         
-    # 數值轉換：包含成本單價
     for col in ['寬度mm', '長度mm', '進貨數量(顆)', '庫存(顆)', '成本單價']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
@@ -103,8 +101,6 @@ def format_size(row):
 def make_inventory_label(row):
     sz = format_size(row)
     stock_val = int(float(row.get('庫存(顆)', 0)))
-    
-    # 只有主管模式才在選單顯示成本，避免員工看到
     cost_str = ""
     if st.session_state.get('admin_mode', False):
         cost = float(row.get('成本單價', 0))
@@ -140,9 +136,9 @@ if 'current_design' not in st.session_state: st.session_state['current_design'] 
 if 'order_id_input' not in st.session_state: 
     st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 
-st.title("💎 GemCraft 成本控管系統 (v7.0)")
+st.title("💎 GemCraft 成本控管系統 (v7.1 總表回歸版)")
 
-# --- 側邊欄：總資產統計 ---
+# --- 側邊欄 ---
 with st.sidebar:
     st.header("🔑 權限與統計")
     pwd = st.text_input("主管密碼", type="password")
@@ -150,7 +146,6 @@ with st.sidebar:
     
     if st.session_state['admin_mode']:
         st.success("🔓 管理員模式")
-        # 計算總成本
         df_inv = st.session_state['inventory']
         if not df_inv.empty:
             total_cost = (df_inv['庫存(顆)'] * df_inv['成本單價']).sum()
@@ -191,7 +186,6 @@ if page == "📦 庫存與進貨":
 
                 if st.form_submit_button("確認進貨"):
                     if r_type == "➕ 合併 (更新成本)":
-                        # 加權平均成本或是直接覆蓋？這裡選擇直接更新為最新成本
                         st.session_state['inventory'].at[idx, '庫存(顆)'] += qty
                         st.session_state['inventory'].at[idx, '成本單價'] = cost_in
                         log_act = f"補貨(成本${cost_in})"
@@ -206,7 +200,6 @@ if page == "📦 庫存與進貨":
                         log_act = f"補貨新批(成本${cost_in})"
                     
                     save_data_to_gsheet(st.session_state['inventory'])
-                    
                     log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'IN', 
                            '動作': log_act, '名稱': row['名稱'], '數量變動': qty, '成本備註': f"單價${cost_in}"}
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
@@ -216,7 +209,6 @@ if page == "📦 庫存與進貨":
         with st.form("new_item"):
             c1, c2, c3 = st.columns(3)
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
-            # 名稱處理
             exist_names = sorted(list(set([x for x in st.session_state['inventory']['名稱'].astype(str) if x]))) if not st.session_state['inventory'].empty else []
             name_sel = c2.selectbox("名稱", ["➕ 手動輸入"] + exist_names)
             name = c2.text_input("輸入名稱") if name_sel == "➕ 手動輸入" else name_sel
@@ -250,7 +242,6 @@ if page == "📦 庫存與進貨":
                     }
                     st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
                     save_data_to_gsheet(st.session_state['inventory'])
-                    
                     log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'NEW', '動作': '新商品', 
                            '名稱': name, '數量變動': qty_init, '成本備註': f"初始成本${cost_new}"}
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
@@ -275,7 +266,7 @@ if page == "📦 庫存與進貨":
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                     save_history_local(); st.rerun()
 
-    with tab3: # 修改 (包含修改成本)
+    with tab3: # 修改
         if not st.session_state['inventory'].empty:
             inv_e = st.session_state['inventory'].copy()
             inv_e['label'] = inv_e.apply(make_inventory_label, axis=1)
@@ -296,8 +287,29 @@ if page == "📦 庫存與進貨":
                     save_data_to_gsheet(st.session_state['inventory'])
                     st.success("已修正"); st.rerun()
 
+    # --- v7.1 新增：庫存總表區塊 ---
+    st.divider()
+    st.subheader("📊 目前庫存總表")
+    
+    # 簡易搜尋
+    search_term = st.text_input("🔍 搜尋 (名稱/編號)", "", placeholder="輸入關鍵字...")
+    
+    df_display = st.session_state['inventory'].copy()
+    
+    # 過濾
+    if search_term:
+        mask = df_display.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
+        df_display = df_display[mask]
+
+    # 隱藏敏感欄位(若非管理員)
+    if not st.session_state['admin_mode'] and '成本單價' in df_display.columns:
+        df_display = df_display.drop(columns=['成本單價', '進貨廠商'])
+
+    st.dataframe(df_display, use_container_width=True)
+
+
 # ------------------------------------------
-# 頁面 B & C (維持原樣，但隱藏敏感資料)
+# 頁面 B & C (維持原樣)
 # ------------------------------------------
 elif page == "📜 紀錄查詢":
     df_h = st.session_state['history'].copy()
@@ -307,9 +319,6 @@ elif page == "📜 紀錄查詢":
 
 elif page == "🧮 領料與設計單":
     st.subheader("🧮 領料單")
-    # ... (領料邏輯與 v6.0 相同，這裡省略重複代碼，保留核心功能) ...
-    # 為保持長度精簡，領料部分功能直接沿用，若需要看成本計算利潤可再擴充
-    
     items = st.session_state['inventory'].copy()
     if not items.empty:
         items['lbl'] = items.apply(make_inventory_label, axis=1)
@@ -324,16 +333,14 @@ elif page == "🧮 領料與設計單":
                 st.session_state['current_design'].append({
                     '編號': items.loc[idx, '編號'], '批號': items.loc[idx, '批號'],
                     '名稱': items.loc[idx, '名稱'], '數量': qty,
-                    '成本小計': float(items.loc[idx, '成本單價']) * qty # 偷記成本
+                    '成本小計': float(items.loc[idx, '成本單價']) * qty 
                 })
                 st.rerun()
 
     if st.session_state['current_design']:
         df_d = pd.DataFrame(st.session_state['current_design'])
-        # 只有管理員看得到成本小計
         if not st.session_state['admin_mode'] and '成本小計' in df_d.columns:
             df_d = df_d.drop(columns=['成本小計'])
-            
         st.table(df_d)
         
         if st.session_state['admin_mode']:
@@ -341,7 +348,6 @@ elif page == "🧮 領料與設計單":
             st.info(f"💰 本單總成本: ${total_cost:,.0f}")
 
         if st.button("✅ 確認領出"):
-            # (執行扣庫存與存檔邏輯，同 v6.0)
             for x in st.session_state['current_design']:
                  mask = (st.session_state['inventory']['編號'] == x['編號']) & \
                         (st.session_state['inventory']['批號'] == x['批號'])
