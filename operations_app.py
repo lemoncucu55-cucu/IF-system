@@ -1,126 +1,276 @@
 import streamlit as st
 import pandas as pd
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import date, datetime
+import sqlite3
+from datetime import date, datetime, timedelta
+import os
 import time
 import io
+import re
 
 # ==========================================
-# 1. 系統設定 (成本版)
+# 1. 系統設定
 # ==========================================
-PAGE_TITLE = "numbertalk 成本與採購系統"
-SPREADSHEET_NAME = "numbertalk-system" 
+PAGE_TITLE = "製造庫存系統 (多倉總表匯入版)"
+DB_FILE = "inventory_system.db"
+ADMIN_PASSWORD = "8888"
+
+# 固定選項 (請確保 Excel 標題列的倉庫名稱與這裡完全一致)
+WAREHOUSES = ["Wen", "千畇", "James", "Imeng"]
+CATEGORIES = ["天然石", "金屬配件", "線材", "包裝材料", "完成品"]
+SERIES = ["原料", "半成品", "成品", "包材"]
+KEYERS = ["Wen", "千畇", "James", "Imeng", "小幫手"]
+
+# 預設庫存調整原因
+DEFAULT_REASONS = ["盤點差異", "報廢", "樣品借出", "系統修正", "其他"]
 
 # ==========================================
-# 2. Google Sheet 連線核心
+# 2. 資料庫核心 (SQLite)
 # ==========================================
-SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 
-@st.cache_resource
-def get_client():
+def get_connection():
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    return conn
+
+def init_db():
+    conn = get_connection()
+    c = conn.cursor()
+    # 1. 商品主檔
+    c.execute('''CREATE TABLE IF NOT EXISTS products 
+                 (sku TEXT PRIMARY KEY, name TEXT, category TEXT, series TEXT, spec TEXT)''')
+    # 2. 庫存表
+    c.execute('''CREATE TABLE IF NOT EXISTS stock 
+                 (sku TEXT, warehouse TEXT, qty REAL, PRIMARY KEY (sku, warehouse))''')
+    # 3. 流水帳
+    c.execute('''CREATE TABLE IF NOT EXISTS history 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_type TEXT, doc_no TEXT, date TEXT, 
+                  sku TEXT, warehouse TEXT, qty REAL, user TEXT, note TEXT, cost REAL, 
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    conn.commit()
+    conn.close()
+
+def reset_db():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DROP TABLE IF EXISTS products")
+    c.execute("DROP TABLE IF EXISTS stock")
+    c.execute("DROP TABLE IF EXISTS history")
+    conn.commit()
+    conn.close()
+    init_db()
+
+# --- 資料操作函式 ---
+
+def add_product(sku, name, category, series, spec):
+    conn = get_connection()
+    c = conn.cursor()
     try:
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
-        client = gspread.authorize(creds)
-        return client
+        c.execute("INSERT INTO products (sku, name, category, series, spec) VALUES (?, ?, ?, ?, ?)",
+                  (sku, name, category, series, spec))
+        for wh in WAREHOUSES:
+            c.execute("INSERT OR IGNORE INTO stock (sku, warehouse, qty) VALUES (?, ?, 0)", (sku, wh))
+        conn.commit()
+        return True, "成功"
+    except sqlite3.IntegrityError:
+        return False, "貨號已存在，無法重複建立"
     except Exception as e:
-        st.error(f"❌ 連線失敗: {e}")
-        return None
+        return False, str(e)
+    finally:
+        conn.close()
 
-def get_worksheet(sheet_name):
-    client = get_client()
-    if not client: return None
-    try:
-        sh = client.open(SPREADSHEET_NAME)
-        return sh.worksheet(sheet_name)
-    except Exception as e:
-        st.error(f"❌ 讀取錯誤 ({sheet_name}): {e}")
-        return None
+def get_all_products():
+    conn = get_connection()
+    df = pd.read_sql("SELECT * FROM products", conn)
+    conn.close()
+    return df
 
-@st.cache_data(ttl=5)
-def load_data(sheet_name):
-    ws = get_worksheet(sheet_name)
-    if not ws: return pd.DataFrame()
-    data = ws.get_all_records()
-    return pd.DataFrame(data)
+def get_current_stock(sku, warehouse):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT qty FROM stock WHERE sku=? AND warehouse=?", (sku, warehouse))
+    res = c.fetchone()
+    conn.close()
+    return res[0] if res else 0.0
 
-def clear_cache():
-    load_data.clear()
-
-# ==========================================
-# 3. 核心邏輯
-# ==========================================
-
-# --- 廠商管理 ---
-def add_supplier(name, contact, phone, note):
-    ws = get_worksheet("Suppliers")
-    if not ws: return False, "連線失敗"
-    df = load_data("Suppliers")
-    if not df.empty and name in df['name'].astype(str).values:
-        return False, "廠商名稱已存在"
+def get_stock_overview():
+    conn = get_connection()
+    df_prod = pd.read_sql("SELECT * FROM products", conn)
+    df_stock = pd.read_sql("SELECT * FROM stock", conn)
+    conn.close()
     
-    ws.append_row([name, contact, phone, note])
-    clear_cache()
-    return True, "成功"
+    if df_prod.empty: return pd.DataFrame()
+    if df_stock.empty:
+        result = df_prod.copy()
+        for wh in WAREHOUSES: result[wh] = 0.0
+        result['總庫存'] = 0.0
+        return result
 
-def delete_supplier(name):
-    ws = get_worksheet("Suppliers")
+    pivot = df_stock.pivot(index='sku', columns='warehouse', values='qty').fillna(0)
+    for wh in WAREHOUSES:
+        if wh not in pivot.columns: pivot[wh] = 0.0
+            
+    pivot['總庫存'] = pivot[WAREHOUSES].sum(axis=1)
+    result = pd.merge(df_prod, pivot, on='sku', how='left').fillna(0)
+    
+    cols = ['sku', 'series', 'category', 'name', 'spec', '總庫存'] + WAREHOUSES
+    final_cols = [c for c in cols if c in result.columns]
+    return result[final_cols]
+
+def add_transaction(doc_type, date_str, sku, wh, qty, user, note, cost=0):
+    conn = get_connection()
+    c = conn.cursor()
     try:
-        cell = ws.find(name)
-        ws.delete_rows(cell.row)
-        clear_cache()
-        return True, "已刪除"
+        doc_prefix = {
+            "進貨": "IN", "銷售出貨": "OUT", "製造領料": "MO", "製造入庫": "PD",
+            "庫存調整(加)": "ADJ+", "庫存調整(減)": "ADJ-", "期初建檔": "OPEN"
+        }.get(doc_type, "DOC")
+        
+        doc_no = f"{doc_prefix}-{int(time.time())}"
+        
+        c.execute('''INSERT INTO history (doc_type, doc_no, date, sku, warehouse, qty, user, note, cost)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
+                  (doc_type, doc_no, date_str, sku, wh, qty, user, note, cost))
+        
+        factor = 1
+        if doc_type in ['銷售出貨', '製造領料', '庫存調整(減)']:
+            factor = -1
+        
+        change_qty = qty * factor
+        
+        c.execute('''INSERT INTO stock (sku, warehouse, qty) VALUES (?, ?, ?)
+                     ON CONFLICT(sku, warehouse) DO UPDATE SET qty = qty + ?''', 
+                  (sku, wh, change_qty, change_qty))
+        
+        conn.commit()
+        return True
+    except Exception as e:
+        return False
+    finally:
+        conn.close()
+
+def get_distinct_reasons():
+    conn = get_connection()
+    query = """
+    SELECT DISTINCT note FROM history 
+    WHERE doc_type LIKE '庫存調整%' AND note NOT LIKE '%批量%' AND note NOT LIKE '%修正%'
+    ORDER BY note
+    """
+    try:
+        df = pd.read_sql(query, conn)
+        return sorted(list(set(DEFAULT_REASONS + df['note'].tolist())))
     except:
-        return False, "刪除失敗"
+        return DEFAULT_REASONS
+    finally:
+        conn.close()
 
-# --- 成本紀錄 (修改邏輯：輸入總價 -> 算單價) ---
-def add_cost_log(date_str, sku, supplier, qty, total_cost, note):
-    ws = get_worksheet("Cost_Log")
-    
-    # 自動計算平均單價 (防呆：數量為0時單價為0)
-    unit_cost = float(total_cost) / float(qty) if float(qty) > 0 else 0.0
-    
-    # 寫入資料
-    ws.append_row([
-        str(date_str), str(sku), supplier, float(qty), float(unit_cost), float(total_cost), note, str(datetime.now())
-    ])
-    clear_cache()
-    return True, "紀錄成功"
-
-def delete_cost_log(row_id_val):
-    ws = get_worksheet("Cost_Log")
+# --- ★ 修正核心：支援不分大小寫讀取 SKU ---
+def process_full_stock_import(file_obj):
+    """
+    讀取包含多個倉庫欄位的總表，並自動比對差異進行更新
+    """
     try:
-        cell = ws.find(str(row_id_val))
-        ws.delete_rows(cell.row)
-        clear_cache()
-        return True, "已刪除"
-    except Exception as e:
-        return False, f"刪除失敗: {e}"
+        df = pd.read_csv(file_obj) if file_obj.name.endswith('.csv') else pd.read_excel(file_obj)
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        # 1. 識別欄位 (轉為統一標準名稱，不分大小寫)
+        rename_map = {}
+        for c in df.columns:
+            c_upper = c.upper()
+            if c_upper in ['SKU', '編號', '料號']: rename_map[c] = '貨號'
+        
+        df = df.rename(columns=rename_map)
+        
+        if '貨號' not in df.columns:
+            return False, f"錯誤：Excel 必須包含 `貨號` 或 `SKU` 欄位。讀取到的欄位：{list(df.columns)}"
 
-# --- 報表 ---
-def get_cost_summary():
-    df = load_data("Cost_Log")
-    if df.empty: return pd.DataFrame()
-    
-    df['total_cost'] = pd.to_numeric(df['total_cost'], errors='coerce').fillna(0)
-    df['qty'] = pd.to_numeric(df['qty'], errors='coerce').fillna(0)
-    
-    summary = df.groupby('sku').agg({
-        'total_cost': 'sum',
-        'qty': 'sum',
-        'unit_cost': 'mean' 
-    }).reset_index()
-    
-    summary['加權平均成本'] = summary['total_cost'] / summary['qty']
-    
-    df_prod = load_data("Products")
-    if not df_prod.empty:
-        df_prod['sku'] = df_prod['sku'].astype(str)
-        summary['sku'] = summary['sku'].astype(str)
-        summary = pd.merge(summary, df_prod[['sku', 'name', 'series']], on='sku', how='left')
-    
-    return summary
+        # 2. 找出檔案中存在的倉庫欄位 (交集)
+        target_warehouses = [wh for wh in WAREHOUSES if wh in df.columns]
+        
+        if not target_warehouses:
+            return False, f"錯誤：找不到任何倉庫欄位。請確認 Excel 標題包含: {', '.join(WAREHOUSES)}"
+
+        update_count = 0
+        skip_count = 0
+
+        # 3. 逐行、逐倉比對
+        for _, row in df.iterrows():
+            sku = str(row['貨號']).strip()
+            if not sku or sku.lower() == 'nan': continue
+            
+            for wh in target_warehouses:
+                try:
+                    # 讀取 Excel 中的數量 (空白視為 0)
+                    val = row[wh]
+                    new_qty = float(val) if pd.notna(val) and str(val).strip() != '' else 0.0
+                except:
+                    continue # 略過非數字
+
+                current_qty = get_current_stock(sku, wh)
+                diff = new_qty - current_qty
+                
+                if abs(diff) > 0.0001: # 有差異才更新
+                    if current_qty == 0 and diff > 0:
+                        doc_type = "期初建檔"
+                        note = "總表匯入-期初"
+                    else:
+                        doc_type = "庫存調整(加)" if diff > 0 else "庫存調整(減)"
+                        note = f"總表盤點修正 ({wh})"
+                    
+                    add_transaction(doc_type, str(date.today()), sku, wh, abs(diff), "系統匯入", note)
+                    update_count += 1
+                else:
+                    skip_count += 1
+        
+        return True, f"✅ 匯入成功！共掃描 {len(target_warehouses)} 個倉庫欄位。\n已更新 {update_count} 筆異動，{skip_count} 筆無變動。"
+        
+    except Exception as e:
+        return False, str(e)
+
+def get_history(doc_type_filter=None, start_date=None, end_date=None):
+    conn = get_connection()
+    query = """
+    SELECT h.date as '日期', h.doc_type as '單據類型', h.doc_no as '單號',
+           p.series as '系列', p.category as '分類', p.name as '品名', p.spec as '規格',
+           h.sku as '貨號', h.warehouse as '倉庫', h.qty as '數量', 
+           h.user as '經手人', h.note as '備註'
+    FROM history h LEFT JOIN products p ON h.sku = p.sku WHERE 1=1
+    """
+    params = []
+    if doc_type_filter:
+        if isinstance(doc_type_filter, list):
+            placeholders = ','.join(['?'] * len(doc_type_filter))
+            query += f" AND h.doc_type IN ({placeholders})"
+            params.extend(doc_type_filter)
+        else:
+            query += " AND h.doc_type LIKE ?"
+            params.append(f"%{doc_type_filter}%")
+    if start_date and end_date:
+        query += " AND h.date BETWEEN ? AND ?"
+        params.extend([str(start_date), str(end_date)])
+    query += " ORDER BY h.id DESC LIMIT 50"
+    try: df = pd.read_sql(query, conn, params=params)
+    except: df = pd.DataFrame()
+    conn.close()
+    return df
+
+def get_period_summary(start_date, end_date):
+    conn = get_connection()
+    query = """
+    SELECT h.sku, h.doc_type, SUM(h.qty) as total_qty FROM history h
+    WHERE h.date BETWEEN ? AND ? GROUP BY h.sku, h.doc_type
+    """
+    try:
+        df_raw = pd.read_sql(query, conn, params=(str(start_date), str(end_date)))
+        if df_raw.empty: return pd.DataFrame()
+        pivot = df_raw.pivot(index='sku', columns='doc_type', values='total_qty').fillna(0)
+        for col in ['進貨', '銷售出貨', '製造入庫', '製造領料']:
+            if col not in pivot.columns: pivot[col] = 0.0
+        df_prod = pd.read_sql("SELECT sku, name, category, spec FROM products", conn)
+        result = pd.merge(df_prod, pivot, on='sku', how='inner')
+        result = result.rename(columns={'sku': '貨號', 'name': '品名', 'category': '分類', 'spec': '規格', '進貨': '期間進貨量', '銷售出貨': '期間出貨量', '製造入庫': '期間生產量', '製造領料': '期間領料量'})
+        cols = ['貨號', '分類', '品名', '規格', '期間進貨量', '期間出貨量', '期間生產量', '期間領料量']
+        return result[[c for c in cols if c in result.columns]]
+    except: return pd.DataFrame()
+    finally: conn.close()
 
 def to_excel_download(df):
     output = io.BytesIO()
@@ -129,123 +279,237 @@ def to_excel_download(df):
     return output.getvalue()
 
 # ==========================================
-# 4. 介面 UI
+# 3. 初始化
 # ==========================================
-st.set_page_config(page_title=PAGE_TITLE, layout="wide", page_icon="💰")
-st.title(f"💰 {PAGE_TITLE}")
+st.set_page_config(page_title=PAGE_TITLE, layout="wide", page_icon="🏭")
+init_db()
 
-if "gcp_service_account" not in st.secrets:
-    st.error("❌ 未偵測到 secrets 設定。")
-    st.stop()
+# ==========================================
+# 4. 介面邏輯
+# ==========================================
+st.title(f"🏭 {PAGE_TITLE}")
 
 with st.sidebar:
     st.header("功能選單")
-    page = st.radio("前往", ["🏭 廠商管理", "📝 進貨成本登錄", "📊 成本分析報表"])
+    page = st.radio("前往", ["📦 商品管理 (建檔/匯入)", "📥 進貨作業", "🚚 出貨作業", "🔨 製造作業", "⚖️ 庫存盤點", "📊 報表查詢"])
     st.divider()
-    if st.button("🔄 重新讀取"):
-        clear_cache()
-        st.rerun()
+    if st.button("🔴 初始化/重置資料庫"):
+        reset_db(); st.cache_data.clear(); st.success("已重置！"); time.sleep(1); st.rerun()
 
-# --- 1. 廠商管理 ---
-if page == "🏭 廠商管理":
-    st.subheader("🏭 廠商資料庫")
-    
-    with st.form("add_sup"):
-        c1, c2 = st.columns(2)
-        name = c1.text_input("廠商名稱 *必填")
-        contact = c2.text_input("聯絡人")
-        c3, c4 = st.columns(2)
-        phone = c3.text_input("電話/Line")
-        note = c4.text_input("備註")
-        
-        if st.form_submit_button("新增廠商"):
-            if name:
-                s, m = add_supplier(name, contact, phone, note)
-                if s: st.success("成功"); time.sleep(0.5); st.rerun()
-                else: st.error(m)
-            else: st.error("請輸入名稱")
-    
-    st.divider()
-    df_sup = load_data("Suppliers")
-    if not df_sup.empty:
-        for i, row in df_sup.iterrows():
-            c1, c2, c3, c4, c5 = st.columns([2, 1.5, 1.5, 2, 1])
-            c1.markdown(f"**{row['name']}**")
-            c2.text(row['contact'])
-            c3.text(row['phone'])
-            c4.text(row['note'])
-            if c5.button("刪除", key=f"del_sup_{i}"):
-                delete_supplier(row['name'])
-                st.rerun()
-            st.divider()
-
-# --- 2. 進貨成本登錄 ---
-elif page == "📝 進貨成本登錄":
-    st.subheader("📝 批次進貨成本紀錄")
-    
-    df_prod = load_data("Products")
-    df_sup = load_data("Suppliers")
-    
-    if df_prod.empty:
-        st.warning("⚠️ 找不到商品資料，請先去庫存系統建立商品。")
-    elif df_sup.empty:
-        st.warning("⚠️ 尚未建立廠商，請先去「廠商管理」新增。")
-    else:
-        # ★ 修改重點1：選單顯示五欄資訊 (SKU | 系列 | 分類 | 品名 | 規格)
-        # 先轉字串避免錯誤
-        for col in ['sku', 'series', 'category', 'name', 'spec']:
-            df_prod[col] = df_prod[col].astype(str)
-            
-        prod_list = df_prod['sku'] + " | " + df_prod['series'] + " | " + df_prod['category'] + " | " + df_prod['name'] + " | " + df_prod['spec']
-        sup_list = df_sup['name'].tolist()
-        
-        with st.form("add_cost"):
-            st.info("💡 商品選單格式： 貨號 | 系列 | 分類 | 品名 | 規格")
-            c1, c2 = st.columns(2)
-            sel_prod = c1.selectbox("選擇商品", prod_list)
-            sel_sup = c2.selectbox("進貨廠商", sup_list)
-            
-            c3, c4, c5 = st.columns(3)
-            d_val = c3.date_input("進貨日期", date.today())
-            qty = c4.number_input("進貨數量", min_value=1)
-            
-            # ★ 修改重點2：改為輸入「總成本」，系統算單價
-            total_cost = c5.number_input("本批總金額 (Total Cost)", min_value=0.0)
-            
-            note = st.text_input("批號/備註 (Batch No)")
-            
-            # 即時顯示計算結果
-            if qty > 0:
-                unit_cost_calc = total_cost / qty
-                st.markdown(f"🧮 系統自動計算：平均單價為 **${unit_cost_calc:,.2f}**")
-            
-            if st.form_submit_button("💾 儲存紀錄"):
-                sku = sel_prod.split(" | ")[0]
-                s, m = add_cost_log(d_val, sku, sel_sup, qty, total_cost, note)
-                if s: st.success(f"已儲存！單價 ${total_cost/qty:,.2f}"); time.sleep(0.5); st.rerun()
-        
-        st.divider()
-        st.markdown("#### 🕒 最近登錄紀錄")
-        df_log = load_data("Cost_Log")
-        if not df_log.empty:
-            df_log = df_log.sort_index(ascending=False).head(10)
-            st.dataframe(df_log, use_container_width=True)
-
-# --- 3. 成本報表 ---
-elif page == "📊 成本分析報表":
-    st.subheader("📊 成本分析")
-    
-    tab1, tab2 = st.tabs(["加權平均成本", "詳細流水帳"])
+# ------------------------------------------------------------------
+# 1. 商品管理
+# ------------------------------------------------------------------
+if page == "📦 商品管理 (建檔/匯入)":
+    st.subheader("📦 商品資料維護")
+    tab1, tab2, tab3 = st.tabs(["✨ 單筆建檔", "📂 匯入商品資料", "📥 匯入期初完整總表"])
     
     with tab1:
-        st.info("💡 加權平均成本 = 歷史總進貨金額 / 歷史總數量")
-        df_sum = get_cost_summary()
-        st.dataframe(df_sum, use_container_width=True)
-        if not df_sum.empty:
-            st.download_button("下載成本統計表", to_excel_download(df_sum), "Cost_Summary.xlsx")
-            
+        with st.form("add_prod"):
+            c1, c2 = st.columns(2)
+            sku = c1.text_input("貨號 (SKU) *必填")
+            name = c2.text_input("品名 *必填")
+            c3, c4, c5 = st.columns(3)
+            cat = c3.selectbox("分類", CATEGORIES)
+            ser = c4.selectbox("系列", SERIES)
+            spec = c5.text_input("規格/尺寸")
+            if st.form_submit_button("新增商品"):
+                if sku and name:
+                    success, msg = add_product(sku, name, cat, ser, spec)
+                    if success: st.success(f"成功"); time.sleep(1); st.rerun()
+                    else: st.error(msg)
+                else: st.error("必填欄位缺漏")
+
     with tab2:
-        df_log = load_data("Cost_Log")
-        st.dataframe(df_log, use_container_width=True)
-        if not df_log.empty:
-            st.download_button("下載完整紀錄", to_excel_download(df_log), "Cost_Log_Full.xlsx")
+        st.info("請上傳 Excel (欄位：`貨號`, `品名`, `分類`, `系列`, `規格`)")
+        up = st.file_uploader("上傳商品清單", type=['xlsx', 'csv'], key='prod_up')
+        if up and st.button("開始匯入商品"):
+            try:
+                df = pd.read_csv(up) if up.name.endswith('.csv') else pd.read_excel(up)
+                df.columns = [str(c).strip() for c in df.columns]
+                
+                # ★ 修正商品匯入邏輯 (Case-Insensitive)
+                rename_map = {}
+                for c in df.columns:
+                    c_up = c.upper()
+                    if c_up in ['SKU', '編號', '料號']: rename_map[c] = '貨號'
+                    if c_up in ['名稱', '商品名稱', 'NAME']: rename_map[c] = '品名'
+                    if c_up in ['類別', 'CATEGORY']: rename_map[c] = '分類'
+                    if c_up in ['SERIES']: rename_map[c] = '系列'
+                    if c_up in ['尺寸', 'SPEC']: rename_map[c] = '規格'
+                df = df.rename(columns=rename_map)
+                
+                count = 0
+                if '貨號' in df.columns:
+                    for _, row in df.iterrows():
+                        s = str(row.get('貨號', '')).strip()
+                        n = str(row.get('品名', '')).strip()
+                        if s and s.lower() != 'nan':
+                            # 若有貨號但無品名，可以選擇略過或允許空白(更新庫存用)
+                            # 這裡為了安全，若為新商品建議要有品名
+                            add_product(s, n, str(row.get('分類', '未分類')), str(row.get('系列', '未分類')), str(row.get('規格', '')))
+                            count += 1
+                    st.success(f"已掃描並匯入 {count} 筆資料")
+                    time.sleep(1); st.rerun()
+                else: st.error("Excel 缺少 `貨號` 欄位")
+            except Exception as e: st.error(f"匯入失敗: {e}")
+
+    with tab3:
+        st.markdown("### 📥 匯入期初完整總表")
+        st.info(f"此功能支援一次匯入多個倉庫的數量。請上傳包含 `貨號` (或 `sku`) 以及倉庫名稱 ({', '.join(WAREHOUSES)}) 的 Excel 檔。")
+        up_stock = st.file_uploader("上傳完整庫存總表", type=['xlsx', 'csv'], key='stock_up_full_init')
+        if up_stock and st.button("開始匯入期初庫存"):
+            success, msg = process_full_stock_import(up_stock)
+            if success: st.success(msg); time.sleep(3); st.rerun()
+            else: st.error(msg)
+
+    st.divider()
+    st.dataframe(get_all_products(), use_container_width=True)
+
+# ------------------------------------------------------------------
+# 2. 進貨 / 3. 出貨 / 4. 製造 (保持不變)
+# ------------------------------------------------------------------
+elif page == "📥 進貨作業":
+    st.subheader("📥 進貨入庫")
+    prods = get_all_products()
+    if not prods.empty:
+        prods['label'] = prods['sku'] + " | " + prods['name']
+        with st.form("in"):
+            c1, c2 = st.columns([2, 1])
+            sel_prod = c1.selectbox("商品", prods['label'])
+            wh = c2.selectbox("倉庫", WAREHOUSES)
+            c3, c4 = st.columns(2)
+            qty = c3.number_input("數量", 1)
+            d_val = c4.date_input("日期", date.today())
+            user = st.selectbox("經手人", KEYERS)
+            note = st.text_input("備註")
+            if st.form_submit_button("進貨"):
+                if add_transaction("進貨", str(d_val), sel_prod.split(" | ")[0], wh, qty, user, note):
+                    st.success("成功"); time.sleep(0.5); st.rerun()
+        st.dataframe(get_history("進貨"), use_container_width=True)
+
+elif page == "🚚 出貨作業":
+    st.subheader("🚚 銷售出貨")
+    prods = get_all_products()
+    if not prods.empty:
+        prods['label'] = prods['sku'] + " | " + prods['name']
+        with st.form("out"):
+            c1, c2 = st.columns([2, 1])
+            sel_prod = c1.selectbox("商品", prods['label'])
+            wh = c2.selectbox("倉庫", WAREHOUSES, index=2)
+            c3, c4 = st.columns(2)
+            qty = c3.number_input("數量", 1)
+            d_val = c4.date_input("日期", date.today())
+            user = st.selectbox("經手人", KEYERS)
+            note = st.text_input("訂單/備註")
+            if st.form_submit_button("出貨"):
+                if add_transaction("銷售出貨", str(d_val), sel_prod.split(" | ")[0], wh, qty, user, note):
+                    st.success("成功"); time.sleep(0.5); st.rerun()
+        st.dataframe(get_history("銷售出貨"), use_container_width=True)
+
+elif page == "🔨 製造作業":
+    st.subheader("🔨 生產管理")
+    prods = get_all_products()
+    if not prods.empty:
+        prods['label'] = prods['sku'] + " | " + prods['name']
+        t1, t2 = st.tabs(["領料", "完工"])
+        with t1:
+            with st.form("mo1"):
+                sel = st.selectbox("原料", prods['label'])
+                wh = st.selectbox("倉庫", WAREHOUSES)
+                qty = st.number_input("量", 1)
+                if st.form_submit_button("領料"):
+                    add_transaction("製造領料", str(date.today()), sel.split(" | ")[0], wh, qty, "工廠", "領料")
+                    st.success("OK"); time.sleep(0.5); st.rerun()
+        with t2:
+            with st.form("mo2"):
+                sel = st.selectbox("成品", prods['label'])
+                wh = st.selectbox("倉庫", WAREHOUSES)
+                qty = st.number_input("量", 1)
+                if st.form_submit_button("完工"):
+                    add_transaction("製造入庫", str(date.today()), sel.split(" | ")[0], wh, qty, "工廠", "完工")
+                    st.success("OK"); time.sleep(0.5); st.rerun()
+        st.dataframe(get_history(["製造領料", "製造入庫"]), use_container_width=True)
+
+# ------------------------------------------------------------------
+# 5. 庫存盤點 (更新)
+# ------------------------------------------------------------------
+elif page == "⚖️ 庫存盤點":
+    st.subheader("⚖️ 庫存調整")
+    t1, t2 = st.tabs(["👋 單筆調整", "📂 匯入完整庫存總表"])
+    prods = get_all_products()
+    
+    with t1:
+        if not prods.empty:
+            prods['label'] = prods['sku'] + " | " + prods['name']
+            reason_options = get_distinct_reasons() + ["➕ 手動輸入"]
+            with st.form("adj"):
+                c1, c2 = st.columns(2)
+                sel = c1.selectbox("商品", prods['label'])
+                wh = c2.selectbox("倉庫", WAREHOUSES)
+                c3, c4 = st.columns(2)
+                act = c3.radio("動作", ["增加 (+)", "減少 (-)"], horizontal=True)
+                qty = c4.number_input("量", 1)
+                res = st.selectbox("原因", reason_options)
+                if res == "➕ 手動輸入": res = st.text_input("輸入原因")
+                if st.form_submit_button("調整"):
+                    tp = "庫存調整(加)" if act == "增加 (+)" else "庫存調整(減)"
+                    add_transaction(tp, str(date.today()), sel.split(" | ")[0], wh, qty, "管理員", res)
+                    st.success("OK"); time.sleep(0.5); st.rerun()
+
+    with t2:
+        st.markdown("### 📥 上傳完整庫存總表 (盤點修正)")
+        st.info(f"此功能會讀取 Excel 中對應倉庫名稱的欄位 ({', '.join(WAREHOUSES)})，並自動計算差異進行多倉修正。")
+        
+        up_stock = st.file_uploader("上傳完整盤點表", type=['xlsx', 'csv'], key='stock_up_full_adj')
+        if up_stock and st.button("開始比對並更新庫存"):
+            success, msg = process_full_stock_import(up_stock)
+            if success: 
+                st.success(msg)
+                time.sleep(3)
+                st.rerun()
+            else: 
+                st.error(msg)
+    
+    st.divider()
+    st.dataframe(get_stock_overview(), use_container_width=True)
+
+# ------------------------------------------------------------------
+# 6. 報表查詢
+# ------------------------------------------------------------------
+elif page == "📊 報表查詢":
+    st.subheader("📊 數據報表中心")
+    t1, t2, t3 = st.tabs(["📦 庫存總表", "📅 期間統計", "📜 流水帳"])
+    
+    with t1:
+        df = get_stock_overview()
+        st.dataframe(df, use_container_width=True)
+        if not df.empty:
+            st.download_button("📥 下載完整總表", to_excel_download(df), f"Stock_All_{date.today()}.xlsx")
+            st.divider()
+            st.markdown("#### 🏢 分倉庫存下載")
+            cols = st.columns(len(WAREHOUSES))
+            for i, wh in enumerate(WAREHOUSES):
+                # 只下載該倉庫有數據的欄位
+                target_cols = ['sku', 'series', 'category', 'name', 'spec', wh]
+                df_wh = df[[c for c in target_cols if c in df.columns]].copy()
+                with cols[i]:
+                    st.download_button(f"📥 {wh} 庫存", to_excel_download(df_wh), f"Stock_{wh}.xlsx")
+
+    with t2:
+        c1, c2 = st.columns(2)
+        d1 = c1.date_input("起", date.today().replace(day=1))
+        d2 = c2.date_input("迄", date.today())
+        if st.button("生成"):
+            df_p = get_period_summary(d1, d2)
+            if not df_p.empty:
+                st.dataframe(df_p, use_container_width=True)
+                st.download_button("下載", to_excel_download(df_p), "Report.xlsx")
+            else: st.info("無資料")
+
+    with t3:
+        st.markdown("#### 下載明細")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.download_button("進貨明細", to_excel_download(get_history("進貨")), "In.xlsx")
+        c2.download_button("出貨明細", to_excel_download(get_history("銷售出貨")), "Out.xlsx")
+        c3.download_button("製造明細", to_excel_download(get_history(["製造領料", "製造入庫"])), "Mfg.xlsx")
+        c4.download_button("完整流水帳", to_excel_download(get_history()), "All_Logs.xlsx")
