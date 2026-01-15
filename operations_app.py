@@ -133,7 +133,6 @@ def make_inventory_label(row):
     cost_str = ""
     if st.session_state.get('admin_mode', False):
         cost = float(row.get('成本單價', 0))
-        # v9.3 修改: 強制顯示兩位小數
         if cost > 0: cost_str = f" 💰${cost:.2f}"
 
     return f"[{row.get('倉庫','Imeng')}] 【{batch}】 {elem_display}{row.get('名稱','')} {sz} ({row.get('形狀','')}) {cost_str} | 存:{stock_val}"
@@ -164,7 +163,7 @@ if 'current_design' not in st.session_state: st.session_state['current_design'] 
 if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
-st.title("💎 IF Crystal 全雲端系統 (v9.3)")
+st.title("💎 IF Crystal 全雲端系統 (v9.4)")
 
 with st.sidebar:
     st.header("🔑 權限與統計")
@@ -176,7 +175,6 @@ with st.sidebar:
         df_inv = st.session_state['inventory']
         if not df_inv.empty:
             total_cost = (df_inv['庫存(顆)'] * df_inv['成本單價']).sum()
-            # v9.3 修改: 側邊欄總資產顯示兩位小數
             st.metric("💰 庫存總資產", f"${total_cost:,.2f}")
     else:
         st.info("🔒 訪客模式")
@@ -203,7 +201,6 @@ if page == "📦 庫存與進貨":
             with st.form("restock"):
                 old_cost = float(row.get('成本單價', 0))
                 elem_info = f" ({row.get('五行', '')})" if row.get('五行', '') else ""
-                # v9.3 修改: 顯示兩位小數
                 st.info(f"品名：{row['名稱']}{elem_info} | 目前單價成本：${old_cost:.2f}")
                 
                 c1, c2, c3 = st.columns(3)
@@ -211,7 +208,6 @@ if page == "📦 庫存與進貨":
                 
                 total_cost_in = c2.number_input("💰 本次進貨總成本 (總價)", min_value=0.0, step=1.0)
                 calc_unit_cost = total_cost_in / qty if qty > 0 else 0
-                # v9.3 修改: 顯示兩位小數
                 c2.caption(f"換算單價: ${calc_unit_cost:.2f} /顆")
                 
                 r_type = c3.radio("方式", ["➕ 合併 (更新成本)", "📦 新批號"])
@@ -223,7 +219,6 @@ if page == "📦 庫存與進貨":
                     if r_type == "➕ 合併 (更新成本)":
                         st.session_state['inventory'].at[idx, '庫存(顆)'] += qty
                         st.session_state['inventory'].at[idx, '成本單價'] = final_unit_cost
-                        # v9.3 修改: 紀錄顯示兩位小數
                         log_act = f"補貨(總${total_cost_in:.2f})"
                     else:
                         new_r = row.copy()
@@ -232,7 +227,6 @@ if page == "📦 庫存與進貨":
                         new_r['進貨日期'] = date.today()
                         new_r['批號'] = new_batch
                         new_r['成本單價'] = final_unit_cost
-                        # v9.3 修改: 紀錄顯示兩位小數
                         log_act = f"補貨新批(總${total_cost_in:.2f})"
                     
                     save_inventory_to_gsheet(st.session_state['inventory'])
@@ -269,7 +263,6 @@ if page == "📦 庫存與進貨":
             total_cost_init = c8.number_input("💰 初始總成本 (總價)", min_value=0.0, step=1.0)
             
             calc_init_unit = total_cost_init / qty_init if qty_init > 0 else 0
-            # v9.3 修改: 顯示兩位小數
             c8.caption(f"換算單價: ${calc_init_unit:.2f} /顆")
             
             batch = st.text_input("初始批號", f"{date.today().strftime('%Y%m%d')}-01")
@@ -321,7 +314,7 @@ if page == "📦 庫存與進貨":
                     save_history_to_gsheet(st.session_state['history'])
                     st.rerun()
 
-    with tab3: # 修改 (v9.3 重大更新：新增修改模式選擇)
+    with tab3: # 修改 (v9.4 修正: 移除表單包裹，恢復互動性)
         if not st.session_state['inventory'].empty:
             inv_e = st.session_state['inventory'].copy()
             inv_e['label'] = inv_e.apply(make_inventory_label, axis=1)
@@ -329,71 +322,71 @@ if page == "📦 庫存與進貨":
             idx = inv_e[inv_e['label'] == target].index[0]
             row = st.session_state['inventory'].loc[idx]
             
-            with st.form("edit_form"):
-                c1, c2 = st.columns(2)
-                nm = c1.text_input("名稱", row['名稱'])
-                qt = c2.number_input("庫存", value=int(float(row['庫存(顆)'])))
+            # 這裡移除了 with st.form("edit_form"): 讓下面的 radio button 可以即時觸發更新
+            
+            c1, c2 = st.columns(2)
+            nm = c1.text_input("名稱", row['名稱'])
+            qt = c2.number_input("庫存", value=int(float(row['庫存(顆)'])))
+            
+            c3, c4 = st.columns(2)
+            w_mm = c3.number_input("寬度 (mm)", value=float(row.get('寬度mm', 0)))
+            l_mm = c4.number_input("長度 (mm)", value=float(row.get('長度mm', 0)))
+
+            st.divider()
+            # 互動區域：點選後會立刻重新整理頁面，秀出對應的輸入框
+            edit_mode = st.radio("修改模式", ["🔢 僅修改數量/資料 (單價不變)", "🔄 重新計算單價 (依總價值)"], horizontal=True)
+            
+            curr_unit_cost = float(row.get('成本單價', 0))
+            final_unit_cost_save = curr_unit_cost 
+            log_note = "僅修改數量/資料(成本不變)"
+
+            if edit_mode == "🔄 重新計算單價 (依總價值)":
+                default_total_cost = curr_unit_cost * int(float(row.get('庫存(顆)', 0)))
+                total_val = st.number_input("💰 庫存總價值 (總價)", value=default_total_cost, step=1.0)
+                new_unit_cost_calc = total_val / qt if qt > 0 else 0
+                st.caption(f"換算新單價: ${new_unit_cost_calc:.2f} /顆")
+                final_unit_cost_save = new_unit_cost_calc
+                log_note = f"改總價重新計算(總${total_val:.2f})"
+            else:
+                st.info(f"維持目前成本單價: ${curr_unit_cost:.2f} /顆")
+
+            st.divider()
+            c6, c7 = st.columns(2)
+            curr_elem = str(row.get('五行', '')).strip()
+            elem_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
+            if curr_elem and curr_elem not in elem_opts: elem_opts.append(curr_elem)
+            try: elem_idx = elem_opts.index(curr_elem)
+            except: elem_idx = 0
+            sel_elem = c6.selectbox("五行", elem_opts, index=elem_idx, key="edit_elem_sel")
+            final_elem = c6.text_input("輸入新五行", key="edit_elem_txt") if sel_elem == "➕ 手動輸入" else sel_elem
+            
+            curr_shape = str(row.get('形狀', '')).strip()
+            shape_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
+            if curr_shape and curr_shape not in shape_opts: shape_opts.append(curr_shape)
+            try: shape_idx = shape_opts.index(curr_shape)
+            except: shape_idx = 0
+            sel_shape = c7.selectbox("形狀", shape_opts, index=shape_idx, key="edit_shape_sel")
+            final_shape = c7.text_input("輸入新形狀", key="edit_shape_txt") if sel_shape == "➕ 手動輸入" else sel_shape
+
+            # 改回普通按鈕 (因為移除了 Form)
+            if st.button("💾 儲存修正", type="primary"):
+                st.session_state['inventory'].at[idx, '名稱'] = nm
+                st.session_state['inventory'].at[idx, '庫存(顆)'] = qt
+                st.session_state['inventory'].at[idx, '成本單價'] = final_unit_cost_save
+                st.session_state['inventory'].at[idx, '寬度mm'] = w_mm
+                st.session_state['inventory'].at[idx, '長度mm'] = l_mm
+                st.session_state['inventory'].at[idx, '五行'] = final_elem 
+                st.session_state['inventory'].at[idx, '形狀'] = final_shape
                 
-                c3, c4 = st.columns(2)
-                w_mm = c3.number_input("寬度 (mm)", value=float(row.get('寬度mm', 0)))
-                l_mm = c4.number_input("長度 (mm)", value=float(row.get('長度mm', 0)))
-
-                st.divider()
-                # v9.3 新增: 修改模式選擇
-                edit_mode = st.radio("修改模式", ["🔢 僅修改數量/資料 (單價不變)", "🔄 重新計算單價 (依總價值)"], horizontal=True)
-                
-                curr_unit_cost = float(row.get('成本單價', 0))
-                final_unit_cost_save = curr_unit_cost # 預設為原單價
-                log_note = "僅修改數量/資料(成本不變)"
-
-                if edit_mode == "🔄 重新計算單價 (依總價值)":
-                    # 原本的邏輯：輸入總價，反推單價
-                    default_total_cost = curr_unit_cost * int(float(row.get('庫存(顆)', 0)))
-                    total_val = st.number_input("💰 庫存總價值 (總價)", value=default_total_cost, step=1.0)
-                    new_unit_cost_calc = total_val / qt if qt > 0 else 0
-                    st.caption(f"換算新單價: ${new_unit_cost_calc:.2f} /顆")
-                    final_unit_cost_save = new_unit_cost_calc
-                    log_note = f"改總價重新計算(總${total_val:.2f})"
-                else:
-                    # 新邏輯：只顯示原單價，不提供修改總價的輸入框
-                    st.info(f"維持目前成本單價: ${curr_unit_cost:.2f} /顆")
-
-                st.divider()
-                c6, c7 = st.columns(2)
-                curr_elem = str(row.get('五行', '')).strip()
-                elem_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
-                if curr_elem and curr_elem not in elem_opts: elem_opts.append(curr_elem)
-                try: elem_idx = elem_opts.index(curr_elem)
-                except: elem_idx = 0
-                sel_elem = c6.selectbox("五行", elem_opts, index=elem_idx, key="edit_elem_sel")
-                final_elem = c6.text_input("輸入新五行", key="edit_elem_txt") if sel_elem == "➕ 手動輸入" else sel_elem
-                
-                curr_shape = str(row.get('形狀', '')).strip()
-                shape_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
-                if curr_shape and curr_shape not in shape_opts: shape_opts.append(curr_shape)
-                try: shape_idx = shape_opts.index(curr_shape)
-                except: shape_idx = 0
-                sel_shape = c7.selectbox("形狀", shape_opts, index=shape_idx, key="edit_shape_sel")
-                final_shape = c7.text_input("輸入新形狀", key="edit_shape_txt") if sel_shape == "➕ 手動輸入" else sel_shape
-
-                if st.form_submit_button("儲存修正"):
-                    st.session_state['inventory'].at[idx, '名稱'] = nm
-                    st.session_state['inventory'].at[idx, '庫存(顆)'] = qt
-                    st.session_state['inventory'].at[idx, '成本單價'] = final_unit_cost_save
-                    st.session_state['inventory'].at[idx, '寬度mm'] = w_mm
-                    st.session_state['inventory'].at[idx, '長度mm'] = l_mm
-                    st.session_state['inventory'].at[idx, '五行'] = final_elem 
-                    st.session_state['inventory'].at[idx, '形狀'] = final_shape
-                    
-                    save_inventory_to_gsheet(st.session_state['inventory'])
-                    new_spec = f"{w_mm}x{l_mm}mm" if l_mm > 0 else f"{w_mm}mm"
-                    log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'ADJUST', '動作': '盤點修正', 
-                           '倉庫': row['倉庫'], '批號': row['批號'], '編號': row['編號'], '分類': row['分類'], '名稱': nm, 
-                           '規格': new_spec, '廠商': row['進貨廠商'], '數量變動': 0, 
-                           '成本備註': log_note}
-                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                    save_history_to_gsheet(st.session_state['history'])
-                    st.success(f"已修正! 單價為: ${final_unit_cost_save:.2f}"); st.rerun()
+                save_inventory_to_gsheet(st.session_state['inventory'])
+                new_spec = f"{w_mm}x{l_mm}mm" if l_mm > 0 else f"{w_mm}mm"
+                log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'ADJUST', '動作': '盤點修正', 
+                       '倉庫': row['倉庫'], '批號': row['批號'], '編號': row['編號'], '分類': row['分類'], '名稱': nm, 
+                       '規格': new_spec, '廠商': row['進貨廠商'], '數量變動': 0, 
+                       '成本備註': log_note}
+                st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
+                save_history_to_gsheet(st.session_state['history'])
+                st.success(f"已修正! 單價為: ${final_unit_cost_save:.2f}"); st.rerun()
 
     st.divider()
     st.subheader("📊 目前庫存總表")
@@ -405,7 +398,6 @@ if page == "📦 庫存與進貨":
     if not st.session_state['admin_mode'] and '成本單價' in df_display.columns:
         df_display = df_display.drop(columns=['成本單價', '進貨廠商'])
     
-    # v9.3 修改: 使用 Pandas Styling 將成本單價欄位格式化為兩位小數
     if '成本單價' in df_display.columns:
         st.dataframe(df_display.style.format({'成本單價': '{:.2f}'}, na_rep=''), use_container_width=True)
     else:
@@ -479,7 +471,6 @@ elif page == "🧮 領料與設計單":
                 cost_info = ""
                 if st.session_state['admin_mode'] and '成本小計' in item:
                     unit_cost = item['成本小計'] / item['數量'] if item['數量'] > 0 else 0
-                    # v9.3 修改: 顯示兩位小數
                     cost_info = f" | 💰${unit_cost:.2f}/顆"
                 
                 spec_info = f"({item.get('規格', '')})" if item.get('規格', '') else ""
@@ -505,7 +496,6 @@ elif page == "🧮 領料與設計單":
                 if mask.any():
                     u_cost = float(st.session_state['inventory'].loc[mask, '成本單價'].values[0])
                     total_cost_calc += u_cost * item['數量']
-            # v9.3 修改: 顯示兩位小數
             st.info(f"💰 本單預估總成本: ${total_cost_calc:,.2f}")
 
         c_confirm, c_clear = st.columns([4, 1])
