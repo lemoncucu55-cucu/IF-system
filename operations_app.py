@@ -9,7 +9,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 # 1. 核心設定 (Google Sheets & 雲端/本地雙棲模式)
 # ==========================================
 
-SHEET_NAME = "IFcrystal_inventory"
+# v9.2 修改：直接使用您指定網址的 ID，確保連線到正確的後台
+SHEET_ID = "1gf-pn034w0oZx8jWDUJvmIyHX_O7eHbiBb9diVSBX0Q" 
 KEY_FILE = "google_key.json" # 本地端用的鑰匙檔名
 
 # 庫存表欄位
@@ -38,17 +39,16 @@ DEFAULT_ELEMENTS = ["金", "木", "水", "火", "土", "綜合", "銀", "銅", "
 def get_google_sheet_client():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     
-    # --- v9.1 修正：加入 try-except 來自動切換 ---
     try:
-        # 先嘗試讀取雲端 Secrets (如果沒設定會報錯，就會跳到 except)
+        # 先嘗試讀取雲端 Secrets
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         else:
-            # 如果 secrets 存在但沒有 gcp_service_account，回退到本地檔案
+            # 回退到本地檔案
             creds = ServiceAccountCredentials.from_json_keyfile_name(KEY_FILE, scope)
     except:
-        # 如果在本機找不到 secrets.toml 檔案 (您的情況)，直接讀取本地 JSON
+        # 強制回退本地
         creds = ServiceAccountCredentials.from_json_keyfile_name(KEY_FILE, scope)
         
     client = gspread.authorize(creds)
@@ -58,7 +58,8 @@ def get_google_sheet_client():
 def load_inventory_from_gsheet():
     try:
         client = get_google_sheet_client()
-        sheet = client.open(SHEET_NAME).sheet1
+        # v9.2 修改：使用 open_by_key (最精準的連線方式)
+        sheet = client.open_by_key(SHEET_ID).sheet1
         data = sheet.get_all_records()
         if not data: return pd.DataFrame(columns=COLUMNS)
         
@@ -81,7 +82,8 @@ def load_history_from_gsheet():
     try:
         client = get_google_sheet_client()
         try:
-            sheet = client.open(SHEET_NAME).worksheet("History")
+            # v9.2 修改：使用 open_by_key
+            sheet = client.open_by_key(SHEET_ID).worksheet("History")
         except:
             st.warning("⚠️ 找不到 'History' 分頁，請在 Google Sheet 建立該分頁。")
             return pd.DataFrame(columns=HISTORY_COLUMNS)
@@ -100,7 +102,8 @@ def load_history_from_gsheet():
 def save_inventory_to_gsheet(df):
     try:
         client = get_google_sheet_client()
-        sheet = client.open(SHEET_NAME).sheet1
+        # v9.2 修改：使用 open_by_key
+        sheet = client.open_by_key(SHEET_ID).sheet1
         sheet.clear()
         update_data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
         sheet.update(update_data)
@@ -111,7 +114,8 @@ def save_inventory_to_gsheet(df):
 def save_history_to_gsheet(df):
     try:
         client = get_google_sheet_client()
-        sheet = client.open(SHEET_NAME).worksheet("History")
+        # v9.2 修改：使用 open_by_key
+        sheet = client.open_by_key(SHEET_ID).worksheet("History")
         sheet.clear()
         update_data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
         sheet.update(update_data)
@@ -169,7 +173,7 @@ if 'current_design' not in st.session_state: st.session_state['current_design'] 
 if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
-st.title("💎 IF Crystal 全雲端系統 (v9.1)")
+st.title("💎 IF Crystal 全雲端系統 (v9.2)")
 
 with st.sidebar:
     st.header("🔑 權限與統計")
@@ -495,7 +499,6 @@ elif page == "🧮 領料與設計單":
             if not final_oid: final_oid = f"DES-{date.today().strftime('%Y%m%d')}"
             
             for x in st.session_state['current_design']:
-                 # 重新從庫存表撈一次資料，確保「倉庫、分類、規格、廠商」是最新的
                  mask = (st.session_state['inventory']['編號'] == x['編號']) & \
                         (st.session_state['inventory']['批號'] == x['批號'])
                  
