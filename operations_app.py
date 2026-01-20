@@ -57,15 +57,23 @@ def load_inventory_from_gsheet():
         if not data: return pd.DataFrame(columns=COLUMNS)
         
         df = pd.DataFrame(data)
+        # 清理欄位名稱
         df.columns = df.columns.astype(str).str.strip().str.replace('\ufeff', '')
+        
+        # 欄位防呆補全
         if 'label' in df.columns: df = df.drop(columns=['label'])
         if '批號' not in df.columns: df['批號'] = '初始存貨'
         if '倉庫' not in df.columns: df.insert(1, '倉庫', 'Imeng')
         for col in COLUMNS:
             if col not in df.columns: df[col] = ""
+            
         df = df[COLUMNS].copy().fillna("")
+        
+        # v9.6 強化：更嚴格的數字轉換，防止後台手動輸入錯誤導致當機
         for col in ['寬度mm', '長度mm', '進貨數量(顆)', '庫存(顆)', '成本單價']:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            # 先轉字串去空白，再轉數字
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0)
+            
         return df
     except Exception as e:
         st.error(f"❌ 無法讀取庫存表: {e}"); return pd.DataFrame(columns=COLUMNS)
@@ -135,6 +143,7 @@ def make_inventory_label(row):
         cost = float(row.get('成本單價', 0))
         if cost > 0: cost_str = f" 💰${cost:.2f}"
 
+    # 維持您習慣的：批號在最後面
     return f"[{row.get('倉庫','Imeng')}] {elem_display}{row.get('名稱','')} {sz} ({row.get('形狀','')}) {cost_str} 【{batch}】 | 存:{stock_val}"
 
 def get_dynamic_options(col, defaults):
@@ -163,7 +172,7 @@ if 'current_design' not in st.session_state: st.session_state['current_design'] 
 if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
-st.title("💎 IF Crystal 全雲端系統 (v9.5)")
+st.title("💎 IF Crystal 全雲端系統 (v9.6)")
 
 with st.sidebar:
     st.header("🔑 權限與統計")
@@ -518,12 +527,11 @@ elif page == "🧮 領料與設計單":
                  if mask.any():
                      t_idx = st.session_state['inventory'][mask].index[0]
                      
-                     # v9.5 新增: 取得單價並寫入 log
+                     # v9.5 新增: 取得單價並寫入 log (整合至 v9.6)
                      u_cost = float(st.session_state['inventory'].loc[mask, '成本單價'].values[0])
                      total_item_cost = u_cost * x['數量']
                      cost_log_str = f"成本${total_item_cost:.2f} (單${u_cost:.2f})"
                      
-                     # 組合使用者備註 + 成本紀錄
                      user_note = st.session_state['order_note_input'].strip() if st.session_state['order_note_input'] else ""
                      final_note = f"{user_note} | {cost_log_str}" if user_note else cost_log_str
 
@@ -541,7 +549,7 @@ elif page == "🧮 領料與設計單":
                          '分類': cat,
                          '規格': spec,
                          '廠商': sup,
-                         '成本備註': final_note # 這裡寫入新的備註
+                         '成本備註': final_note 
                      }
                      st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
             
