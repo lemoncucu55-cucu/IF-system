@@ -135,7 +135,7 @@ def make_inventory_label(row):
         cost = float(row.get('成本單價', 0))
         if cost > 0: cost_str = f" 💰${cost:.2f}"
 
-    return f"[{row.get('倉庫','Imeng')}] 【{batch}】 {elem_display}{row.get('名稱','')} {sz} ({row.get('形狀','')}) {cost_str} | 存:{stock_val}"
+    return f"[{row.get('倉庫','Imeng')}] {elem_display}{row.get('名稱','')} {sz} ({row.get('形狀','')}) {cost_str} 【{batch}】 | 存:{stock_val}"
 
 def get_dynamic_options(col, defaults):
     opts = set(defaults)
@@ -163,7 +163,7 @@ if 'current_design' not in st.session_state: st.session_state['current_design'] 
 if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
-st.title("💎 IF Crystal 全雲端系統 (v9.4)")
+st.title("💎 IF Crystal 全雲端系統 (v9.5)")
 
 with st.sidebar:
     st.header("🔑 權限與統計")
@@ -314,15 +314,13 @@ if page == "📦 庫存與進貨":
                     save_history_to_gsheet(st.session_state['history'])
                     st.rerun()
 
-    with tab3: # 修改 (v9.4 修正: 移除表單包裹，恢復互動性)
+    with tab3: # 修改 (v9.4 模式)
         if not st.session_state['inventory'].empty:
             inv_e = st.session_state['inventory'].copy()
             inv_e['label'] = inv_e.apply(make_inventory_label, axis=1)
             target = st.selectbox("修正商品", inv_e['label'].tolist(), key="edit_sel")
             idx = inv_e[inv_e['label'] == target].index[0]
             row = st.session_state['inventory'].loc[idx]
-            
-            # 這裡移除了 with st.form("edit_form"): 讓下面的 radio button 可以即時觸發更新
             
             c1, c2 = st.columns(2)
             nm = c1.text_input("名稱", row['名稱'])
@@ -333,7 +331,6 @@ if page == "📦 庫存與進貨":
             l_mm = c4.number_input("長度 (mm)", value=float(row.get('長度mm', 0)))
 
             st.divider()
-            # 互動區域：點選後會立刻重新整理頁面，秀出對應的輸入框
             edit_mode = st.radio("修改模式", ["🔢 僅修改數量/資料 (單價不變)", "🔄 重新計算單價 (依總價值)"], horizontal=True)
             
             curr_unit_cost = float(row.get('成本單價', 0))
@@ -368,7 +365,6 @@ if page == "📦 庫存與進貨":
             sel_shape = c7.selectbox("形狀", shape_opts, index=shape_idx, key="edit_shape_sel")
             final_shape = c7.text_input("輸入新形狀", key="edit_shape_txt") if sel_shape == "➕ 手動輸入" else sel_shape
 
-            # 改回普通按鈕 (因為移除了 Form)
             if st.button("💾 儲存修正", type="primary"):
                 st.session_state['inventory'].at[idx, '名稱'] = nm
                 st.session_state['inventory'].at[idx, '庫存(顆)'] = qt
@@ -521,6 +517,16 @@ elif page == "🧮 領料與設計單":
 
                  if mask.any():
                      t_idx = st.session_state['inventory'][mask].index[0]
+                     
+                     # v9.5 新增: 取得單價並寫入 log
+                     u_cost = float(st.session_state['inventory'].loc[mask, '成本單價'].values[0])
+                     total_item_cost = u_cost * x['數量']
+                     cost_log_str = f"成本${total_item_cost:.2f} (單${u_cost:.2f})"
+                     
+                     # 組合使用者備註 + 成本紀錄
+                     user_note = st.session_state['order_note_input'].strip() if st.session_state['order_note_input'] else ""
+                     final_note = f"{user_note} | {cost_log_str}" if user_note else cost_log_str
+
                      st.session_state['inventory'].at[t_idx, '庫存(顆)'] -= x['數量']
                      
                      log = {
@@ -535,7 +541,7 @@ elif page == "🧮 領料與設計單":
                          '分類': cat,
                          '規格': spec,
                          '廠商': sup,
-                         '成本備註': st.session_state['order_note_input'] if st.session_state['order_note_input'] else ""
+                         '成本備註': final_note # 這裡寫入新的備註
                      }
                      st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
             
