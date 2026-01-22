@@ -12,7 +12,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 SHEET_ID = "1gf-pn034w0oZx8jWDUJvmIyHX_O7eHbiBb9diVSBX0Q"
 KEY_FILE = "google_key.json"
 
-# 庫存表欄位
+# 庫存表欄位 (順序必須與 Google Sheet 完全一致)
 COLUMNS = [
     '編號', '批號', '倉庫', '分類', '名稱', 
     '寬度mm', '長度mm', '形狀', '五行', 
@@ -66,8 +66,7 @@ def load_inventory_from_gsheet():
             if col not in df.columns: df[col] = ""
             
         df = df[COLUMNS].copy().fillna("")
-        
-        # 讀取時就先清理一次
+        # 讀取時清理名稱空白
         df['名稱'] = df['名稱'].astype(str).str.strip()
         
         for col in ['寬度mm', '長度mm', '進貨數量(顆)', '庫存(顆)', '成本單價']:
@@ -84,12 +83,9 @@ def load_history_from_gsheet():
         try:
             sheet = client.open_by_key(SHEET_ID).worksheet("History")
         except:
-            st.warning("⚠️ 找不到 'History' 分頁，請在 Google Sheet 建立該分頁。")
             return pd.DataFrame(columns=HISTORY_COLUMNS)
-            
         data = sheet.get_all_records()
         if not data: return pd.DataFrame(columns=HISTORY_COLUMNS)
-        
         df = pd.DataFrame(data)
         for col in HISTORY_COLUMNS:
             if col not in df.columns: df[col] = ""
@@ -97,7 +93,22 @@ def load_history_from_gsheet():
     except Exception as e:
         st.error(f"❌ 無法讀取歷史紀錄: {e}"); return pd.DataFrame(columns=HISTORY_COLUMNS)
 
-# --- 存檔：庫存 (Sheet1) ---
+# --- v9.11 新增: 安全追加單行資料 (append_row) ---
+def append_inventory_row(new_row_dict):
+    try:
+        client = get_google_sheet_client()
+        sheet = client.open_by_key(SHEET_ID).sheet1
+        # 確保順序與 COLUMNS 一致
+        row_values = [str(new_row_dict.get(col, "")) for col in COLUMNS]
+        # 直接追加到最後一行，不覆蓋舊資料
+        sheet.append_row(row_values)
+        st.toast("✅ 新資料已安全寫入雲端 (追加模式)")
+        return True
+    except Exception as e:
+        st.error(f"❌ 新增資料失敗: {e}")
+        return False
+
+# --- 存檔：庫存 (整頁更新，僅用於修改舊資料) ---
 def save_inventory_to_gsheet(df):
     try:
         client = get_google_sheet_client()
@@ -105,13 +116,14 @@ def save_inventory_to_gsheet(df):
         sheet.clear()
         update_data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
         sheet.update(range_name='A1', values=update_data)
-        st.toast("☁️ 庫存雲端同步成功！")
+        st.toast("☁️ 庫存更新成功！")
     except Exception as e: 
         st.error(f"❌ 庫存存檔失敗: {e}"); st.stop()
 
-# --- 存檔：歷史紀錄 (History) ---
+# --- 存檔：歷史紀錄 (追加模式) ---
 def save_history_to_gsheet(df):
     try:
+        # History 其實也可以改用 append_row，但原本的還算穩定，先不動大架構，只動庫存
         client = get_google_sheet_client()
         sheet = client.open_by_key(SHEET_ID).worksheet("History")
         sheet.clear()
@@ -171,7 +183,7 @@ if 'current_design' not in st.session_state: st.session_state['current_design'] 
 if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
-st.title("💎 IF Crystal 全雲端系統 (v9.10)")
+st.title("💎 IF Crystal 全雲端系統 (v9.11)")
 
 with st.sidebar:
     st.header("🔑 權限與統計")
@@ -200,7 +212,6 @@ if page == "📦 庫存與進貨":
     
     with tab1: # 補貨
         if not st.session_state['inventory'].empty:
-            # v9.10: 複製 -> 再次強制清理名稱 -> 排序 (確保萬無一失)
             inv_sorted = st.session_state['inventory'].copy()
             inv_sorted['名稱'] = inv_sorted['名稱'].astype(str).str.strip()
             inv_sorted = inv_sorted.sort_values(by=['名稱', '寬度mm', '五行'])
@@ -229,19 +240,29 @@ if page == "📦 庫存與進貨":
                     final_unit_cost = total_cost_in / qty if qty > 0 else 0
                     
                     if r_type == "➕ 合併 (更新成本)":
+                        # 合併舊邏輯：修改現有資料 -> 整頁覆蓋
                         st.session_state['inventory'].at[idx, '庫存(顆)'] += qty
                         st.session_state['inventory'].at[idx, '成本單價'] = final_unit_cost
+                        save_inventory_to_gsheet(st.session_state['inventory'])
                         log_act = f"補貨(總${total_cost_in:.2f})"
                     else:
+                        # v9.11 修改：新批號 -> 使用 append_row 直接追加到雲端
                         new_r = row.copy()
                         new_r['庫存(顆)'] = qty
                         new_r['進貨數量(顆)'] = qty
-                        new_r['進貨日期'] = date.today()
+                        new_r['進貨日期'] = str(date.today())
                         new_r['批號'] = new_batch
                         new_r['成本單價'] = final_unit_cost
-                        log_act = f"補貨新批(總${total_cost_in:.2f})"
-                    
-                    save_inventory_to_gsheet(st.session_state['inventory'])
+                        
+                        # 1. 先寫入雲端 (最重要)
+                        success = append_inventory_row(new_r)
+                        
+                        # 2. 如果成功，才更新本地顯示 (這樣不用整頁重抓)
+                        if success:
+                            st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
+                            log_act = f"補貨新批(總${total_cost_in:.2f})"
+                        else:
+                            st.stop() # 寫入失敗就停住，不要記歷史
                     
                     log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'IN', 
                            '動作': log_act, '倉庫': row['倉庫'], '批號': new_batch if r_type == "📦 新批號" else row['批號'],
@@ -249,7 +270,6 @@ if page == "📦 庫存與進貨":
                            '規格': format_size(row), '廠商': row['進貨廠商'], '數量變動': qty, 
                            '成本備註': f"總${total_cost_in:.2f} (單${final_unit_cost:.2f})"}
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                    
                     save_history_to_gsheet(st.session_state['history'])
                     st.success(f"已更新！單價已設為: ${final_unit_cost:.2f}"); st.rerun()
 
@@ -290,24 +310,26 @@ if page == "📦 庫存與進貨":
                     new_r = {
                         '編號': f"ST{int(time.time())}", '批號': batch, '倉庫': wh, '分類': cat, '名稱': name, 
                         '寬度mm': w_mm, '長度mm': l_mm, '形狀': shape, '五行': elem, 
-                        '進貨廠商': sup, '庫存(顆)': qty_init, '進貨日期': date.today(),
+                        '進貨廠商': sup, '庫存(顆)': qty_init, '進貨日期': str(date.today()),
                         '成本單價': final_unit_cost
                     }
-                    st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
                     
-                    save_inventory_to_gsheet(st.session_state['inventory'])
+                    # v9.11 修改：建檔也改用 append_row 追加模式
+                    success = append_inventory_row(new_r)
                     
-                    log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'NEW', '動作': '新商品', 
-                           '倉庫': wh, '批號': batch, '編號': new_r['編號'], '分類': cat, '名稱': name, 
-                           '規格': format_size(new_r), '廠商': sup, '數量變動': qty_init, 
-                           '成本備註': f"總${total_cost_init:.2f} (單${final_unit_cost:.2f})"}
-                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                    save_history_to_gsheet(st.session_state['history'])
-                    st.success(f"已建檔！單價: ${final_unit_cost:.2f}"); st.rerun()
+                    if success:
+                        st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
+                        
+                        log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'NEW', '動作': '新商品', 
+                               '倉庫': wh, '批號': batch, '編號': new_r['編號'], '分類': cat, '名稱': name, 
+                               '規格': format_size(new_r), '廠商': sup, '數量變動': qty_init, 
+                               '成本備註': f"總${total_cost_init:.2f} (單${final_unit_cost:.2f})"}
+                        st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
+                        save_history_to_gsheet(st.session_state['history'])
+                        st.success(f"已建檔！單價: ${final_unit_cost:.2f}"); st.rerun()
 
     with tab4: # 領用 (單品)
         if not st.session_state['inventory'].empty:
-            # v9.10: 複製 -> 再次強制清理名稱 -> 排序
             inv_sorted = st.session_state['inventory'].copy()
             inv_sorted['名稱'] = inv_sorted['名稱'].astype(str).str.strip()
             inv_sorted = inv_sorted.sort_values(by=['名稱', '寬度mm', '五行'])
@@ -336,7 +358,6 @@ if page == "📦 庫存與進貨":
 
     with tab3: # 修改
         if not st.session_state['inventory'].empty:
-            # v9.10: 複製 -> 再次強制清理名稱 -> 排序
             inv_sorted = st.session_state['inventory'].copy()
             inv_sorted['名稱'] = inv_sorted['名稱'].astype(str).str.strip()
             inv_sorted = inv_sorted.sort_values(by=['名稱', '寬度mm', '五行'])
@@ -390,7 +411,6 @@ if page == "📦 庫存與進貨":
             final_shape = c7.text_input("輸入新形狀", key="edit_shape_txt") if sel_shape == "➕ 手動輸入" else sel_shape
 
             if st.button("💾 儲存修正", type="primary"):
-                # v9.10: 存檔時也去空白
                 nm = str(nm).strip()
                 st.session_state['inventory'].at[idx, '名稱'] = nm
                 st.session_state['inventory'].at[idx, '庫存(顆)'] = qt
@@ -444,7 +464,6 @@ elif page == "🧮 領料與設計單":
     st.session_state['order_id_input'] = c_oid.text_input("自訂單號", st.session_state['order_id_input'])
     st.session_state['order_note_input'] = c_note.text_input("備註 (選填)", st.session_state['order_note_input'])
     
-    # v9.10 修改: 複製 -> 再次強制清理名稱 -> 排序
     if not st.session_state['inventory'].empty:
         inv_sorted = st.session_state['inventory'].copy()
         inv_sorted['名稱'] = inv_sorted['名稱'].astype(str).str.strip()
