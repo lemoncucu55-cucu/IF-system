@@ -100,16 +100,11 @@ def save_inventory_to_gsheet(df):
         client = get_google_sheet_client()
         sheet = client.open_by_key(SHEET_ID).sheet1
         sheet.clear()
-        
-        # v9.7 修改: 更穩定的寫入方式 (指定 A1 開始)
         update_data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
         sheet.update(range_name='A1', values=update_data)
-        
         st.toast("☁️ 庫存雲端同步成功！")
     except Exception as e: 
-        st.error(f"❌ 庫存存檔失敗: {e}")
-        # 如果存檔失敗，停止程式，避免誤以為成功
-        st.stop()
+        st.error(f"❌ 庫存存檔失敗: {e}"); st.stop()
 
 # --- 存檔：歷史紀錄 (History) ---
 def save_history_to_gsheet(df):
@@ -117,11 +112,8 @@ def save_history_to_gsheet(df):
         client = get_google_sheet_client()
         sheet = client.open_by_key(SHEET_ID).worksheet("History")
         sheet.clear()
-        
-        # v9.7 修改: 更穩定的寫入方式
         update_data = [df.columns.values.tolist()] + df.astype(str).values.tolist()
         sheet.update(range_name='A1', values=update_data)
-        
     except Exception as e: st.error(f"❌ 歷史紀錄存檔失敗: {e}")
 
 # ==========================================
@@ -148,7 +140,6 @@ def make_inventory_label(row):
         cost = float(row.get('成本單價', 0))
         if cost > 0: cost_str = f" 💰${cost:.2f}"
 
-    # v9.7: 維持 v9.6 樣式 (批號在後)
     return f"[{row.get('倉庫','Imeng')}] {elem_display}{row.get('名稱','')} {sz} ({row.get('形狀','')}) {cost_str} 【{batch}】 | 存:{stock_val}"
 
 def get_dynamic_options(col, defaults):
@@ -177,7 +168,7 @@ if 'current_design' not in st.session_state: st.session_state['current_design'] 
 if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
-st.title("💎 IF Crystal 全雲端系統 (v9.7)")
+st.title("💎 IF Crystal 全雲端系統 (v9.8)")
 
 with st.sidebar:
     st.header("🔑 權限與統計")
@@ -205,12 +196,16 @@ if page == "📦 庫存與進貨":
     tab1, tab2, tab4, tab3 = st.tabs(["🔄 補貨", "✨ 建檔", "📤 領用", "🛠️ 修改"])
     
     with tab1: # 補貨
-        inv = st.session_state['inventory']
-        if not inv.empty:
-            inv['label'] = inv.apply(make_inventory_label, axis=1)
-            target = st.selectbox("選擇商品", inv['label'].tolist())
-            idx = inv[inv['label'] == target].index[0]
-            row = inv.loc[idx]
+        if not st.session_state['inventory'].empty:
+            # v9.8 修改: 複製一份並依照【名稱】排序，讓下拉選單好找
+            inv_sorted = st.session_state['inventory'].copy().sort_values(by='名稱')
+            inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
+            
+            target = st.selectbox("選擇商品", inv_sorted['label'].tolist())
+            
+            # 透過 label 反查原始資料的 index (確保更新到正確那筆)
+            idx = inv_sorted[inv_sorted['label'] == target].index[0]
+            row = st.session_state['inventory'].loc[idx]
             
             with st.form("restock"):
                 old_cost = float(row.get('成本單價', 0))
@@ -243,7 +238,6 @@ if page == "📦 庫存與進貨":
                         new_r['成本單價'] = final_unit_cost
                         log_act = f"補貨新批(總${total_cost_in:.2f})"
                     
-                    # 存檔順序優化：確保寫入 Inventory 不報錯才繼續
                     save_inventory_to_gsheet(st.session_state['inventory'])
                     
                     log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'IN', 
@@ -308,11 +302,13 @@ if page == "📦 庫存與進貨":
                     st.success(f"已建檔！單價: ${final_unit_cost:.2f}"); st.rerun()
 
     with tab4: # 領用 (單品)
-        inv_o = st.session_state['inventory'].copy()
-        if not inv_o.empty:
-            inv_o['label'] = inv_o.apply(make_inventory_label, axis=1)
-            target = st.selectbox("選擇商品", inv_o['label'].tolist(), key="out_sel")
-            idx = inv_o[inv_o['label'] == target].index[0]
+        if not st.session_state['inventory'].empty:
+            # v9.8 修改: 複製一份並依照【名稱】排序
+            inv_sorted = st.session_state['inventory'].copy().sort_values(by='名稱')
+            inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
+            
+            target = st.selectbox("選擇商品", inv_sorted['label'].tolist(), key="out_sel")
+            idx = inv_sorted[inv_sorted['label'] == target].index[0]
             row = st.session_state['inventory'].loc[idx]
             
             with st.form("out_form"):
@@ -334,10 +330,12 @@ if page == "📦 庫存與進貨":
 
     with tab3: # 修改 (v9.4 模式)
         if not st.session_state['inventory'].empty:
-            inv_e = st.session_state['inventory'].copy()
-            inv_e['label'] = inv_e.apply(make_inventory_label, axis=1)
-            target = st.selectbox("修正商品", inv_e['label'].tolist(), key="edit_sel")
-            idx = inv_e[inv_e['label'] == target].index[0]
+            # v9.8 修改: 複製一份並依照【名稱】排序
+            inv_sorted = st.session_state['inventory'].copy().sort_values(by='名稱')
+            inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
+            
+            target = st.selectbox("修正商品", inv_sorted['label'].tolist(), key="edit_sel")
+            idx = inv_sorted[inv_sorted['label'] == target].index[0]
             row = st.session_state['inventory'].loc[idx]
             
             c1, c2 = st.columns(2)
@@ -436,13 +434,16 @@ elif page == "🧮 領料與設計單":
     st.session_state['order_id_input'] = c_oid.text_input("自訂單號", st.session_state['order_id_input'])
     st.session_state['order_note_input'] = c_note.text_input("備註 (選填)", st.session_state['order_note_input'])
     
-    items = st.session_state['inventory'].copy()
-    if not items.empty:
-        items['lbl'] = items.apply(make_inventory_label, axis=1)
-        sel = st.selectbox("選擇材料", items['lbl'], key="d_sel")
-        idx = items[items['lbl'] == sel].index[0]
-        cur_s = int(float(items.loc[idx, '庫存(顆)']))
-        row = items.loc[idx]
+    # v9.8 修改: 複製一份並依照【名稱】排序
+    if not st.session_state['inventory'].empty:
+        inv_sorted = st.session_state['inventory'].copy().sort_values(by='名稱')
+        inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
+        
+        sel = st.selectbox("選擇材料", inv_sorted['label'].tolist(), key="d_sel")
+        idx = inv_sorted[inv_sorted['label'] == sel].index[0]
+        
+        row = st.session_state['inventory'].loc[idx]
+        cur_s = int(float(row['庫存(顆)']))
         
         c1, c2 = st.columns([1,2])
         qty = c1.number_input("加入數量", min_value=1, max_value=max(1, cur_s), value=1)
@@ -452,7 +453,7 @@ elif page == "🧮 領料與設計單":
             for item in st.session_state['current_design']:
                 if item['編號'] == row['編號'] and item['批號'] == row['批號']:
                     item['數量'] += qty
-                    if '成本單價' in items.columns:
+                    if '成本單價' in st.session_state['inventory'].columns:
                         item['成本小計'] = float(row['成本單價']) * item['數量']
                     found = True
                     break
@@ -467,7 +468,7 @@ elif page == "🧮 領料與設計單":
                     '規格': format_size(row),
                     '廠商': row.get('進貨廠商', '')
                 }
-                if '成本單價' in items.columns:
+                if '成本單價' in st.session_state['inventory'].columns:
                     new_item['成本小計'] = float(row['成本單價']) * qty
                 st.session_state['current_design'].append(new_item)
             st.rerun()
@@ -536,7 +537,6 @@ elif page == "🧮 領料與設計單":
                  if mask.any():
                      t_idx = st.session_state['inventory'][mask].index[0]
                      
-                     # v9.6 邏輯保留：取得單價並寫入 log
                      u_cost = float(st.session_state['inventory'].loc[mask, '成本單價'].values[0])
                      total_item_cost = u_cost * x['數量']
                      cost_log_str = f"成本${total_item_cost:.2f} (單${u_cost:.2f})"
