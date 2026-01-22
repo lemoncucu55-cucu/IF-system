@@ -67,6 +67,9 @@ def load_inventory_from_gsheet():
             
         df = df[COLUMNS].copy().fillna("")
         
+        # v9.9 強化: 強制清理名稱欄位的空白，確保排序時不會因為多一個空白而被分開
+        df['名稱'] = df['名稱'].astype(str).str.strip()
+        
         for col in ['寬度mm', '長度mm', '進貨數量(顆)', '庫存(顆)', '成本單價']:
             df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '').str.strip(), errors='coerce').fillna(0)
             
@@ -168,7 +171,7 @@ if 'current_design' not in st.session_state: st.session_state['current_design'] 
 if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
-st.title("💎 IF Crystal 全雲端系統 (v9.8)")
+st.title("💎 IF Crystal 全雲端系統 (v9.9)")
 
 with st.sidebar:
     st.header("🔑 權限與統計")
@@ -197,13 +200,11 @@ if page == "📦 庫存與進貨":
     
     with tab1: # 補貨
         if not st.session_state['inventory'].empty:
-            # v9.8 修改: 複製一份並依照【名稱】排序，讓下拉選單好找
-            inv_sorted = st.session_state['inventory'].copy().sort_values(by='名稱')
+            # v9.9 修改: 多重排序 (名稱 > 寬度 > 五行)，確保同名商品一定排在一起
+            inv_sorted = st.session_state['inventory'].copy().sort_values(by=['名稱', '寬度mm', '五行'])
             inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
             
             target = st.selectbox("選擇商品", inv_sorted['label'].tolist())
-            
-            # 透過 label 反查原始資料的 index (確保更新到正確那筆)
             idx = inv_sorted[inv_sorted['label'] == target].index[0]
             row = st.session_state['inventory'].loc[idx]
             
@@ -279,6 +280,8 @@ if page == "📦 庫存與進貨":
             batch = st.text_input("初始批號", f"{date.today().strftime('%Y%m%d')}-01")
             
             if st.form_submit_button("建立商品"):
+                # v9.9: 建檔時也強制去空白
+                name = name.strip()
                 if not name: st.error("沒填名稱")
                 else:
                     final_unit_cost = total_cost_init / qty_init if qty_init > 0 else 0
@@ -303,8 +306,8 @@ if page == "📦 庫存與進貨":
 
     with tab4: # 領用 (單品)
         if not st.session_state['inventory'].empty:
-            # v9.8 修改: 複製一份並依照【名稱】排序
-            inv_sorted = st.session_state['inventory'].copy().sort_values(by='名稱')
+            # v9.9 修改: 多重排序
+            inv_sorted = st.session_state['inventory'].copy().sort_values(by=['名稱', '寬度mm', '五行'])
             inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
             
             target = st.selectbox("選擇商品", inv_sorted['label'].tolist(), key="out_sel")
@@ -328,10 +331,10 @@ if page == "📦 庫存與進貨":
                     save_history_to_gsheet(st.session_state['history'])
                     st.rerun()
 
-    with tab3: # 修改 (v9.4 模式)
+    with tab3: # 修改
         if not st.session_state['inventory'].empty:
-            # v9.8 修改: 複製一份並依照【名稱】排序
-            inv_sorted = st.session_state['inventory'].copy().sort_values(by='名稱')
+            # v9.9 修改: 多重排序
+            inv_sorted = st.session_state['inventory'].copy().sort_values(by=['名稱', '寬度mm', '五行'])
             inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
             
             target = st.selectbox("修正商品", inv_sorted['label'].tolist(), key="edit_sel")
@@ -382,6 +385,8 @@ if page == "📦 庫存與進貨":
             final_shape = c7.text_input("輸入新形狀", key="edit_shape_txt") if sel_shape == "➕ 手動輸入" else sel_shape
 
             if st.button("💾 儲存修正", type="primary"):
+                # v9.9: 修改存檔時也去空白
+                nm = nm.strip()
                 st.session_state['inventory'].at[idx, '名稱'] = nm
                 st.session_state['inventory'].at[idx, '庫存(顆)'] = qt
                 st.session_state['inventory'].at[idx, '成本單價'] = final_unit_cost_save
@@ -434,9 +439,9 @@ elif page == "🧮 領料與設計單":
     st.session_state['order_id_input'] = c_oid.text_input("自訂單號", st.session_state['order_id_input'])
     st.session_state['order_note_input'] = c_note.text_input("備註 (選填)", st.session_state['order_note_input'])
     
-    # v9.8 修改: 複製一份並依照【名稱】排序
+    # v9.9 修改: 多重排序
     if not st.session_state['inventory'].empty:
-        inv_sorted = st.session_state['inventory'].copy().sort_values(by='名稱')
+        inv_sorted = st.session_state['inventory'].copy().sort_values(by=['名稱', '寬度mm', '五行'])
         inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
         
         sel = st.selectbox("選擇材料", inv_sorted['label'].tolist(), key="d_sel")
