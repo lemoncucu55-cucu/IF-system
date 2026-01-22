@@ -4,6 +4,7 @@ from datetime import date, datetime
 import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import numpy as np # 引入 numpy 處理 nan
 
 # ==========================================
 # 1. 核心設定
@@ -93,22 +94,35 @@ def load_history_from_gsheet():
     except Exception as e:
         st.error(f"❌ 無法讀取歷史紀錄: {e}"); return pd.DataFrame(columns=HISTORY_COLUMNS)
 
-# --- v9.11 新增: 安全追加單行資料 (append_row) ---
+# --- v9.12 強化: 安全追加單行資料 (處理 nan 與 小數點) ---
 def append_inventory_row(new_row_dict):
     try:
         client = get_google_sheet_client()
         sheet = client.open_by_key(SHEET_ID).sheet1
-        # 確保順序與 COLUMNS 一致
-        row_values = [str(new_row_dict.get(col, "")) for col in COLUMNS]
-        # 直接追加到最後一行，不覆蓋舊資料
+        
+        # 準備要寫入的資料列表
+        row_values = []
+        for col in COLUMNS:
+            val = new_row_dict.get(col, "")
+            
+            # 特殊處理：如果是 nan 或 None，轉為 0 或空字串
+            if pd.isna(val) or str(val).lower() == 'nan':
+                if col in ['進貨數量(顆)', '庫存(顆)', '成本單價', '寬度mm', '長度mm']:
+                    val = 0
+                else:
+                    val = ""
+            
+            row_values.append(str(val))
+
+        # 直接追加到最後一行
         sheet.append_row(row_values)
-        st.toast("✅ 新資料已安全寫入雲端 (追加模式)")
+        st.toast("✅ 新資料已安全寫入雲端 (精準修正版)")
         return True
     except Exception as e:
         st.error(f"❌ 新增資料失敗: {e}")
         return False
 
-# --- 存檔：庫存 (整頁更新，僅用於修改舊資料) ---
+# --- 存檔：庫存 (整頁更新) ---
 def save_inventory_to_gsheet(df):
     try:
         client = get_google_sheet_client()
@@ -120,10 +134,9 @@ def save_inventory_to_gsheet(df):
     except Exception as e: 
         st.error(f"❌ 庫存存檔失敗: {e}"); st.stop()
 
-# --- 存檔：歷史紀錄 (追加模式) ---
+# --- 存檔：歷史紀錄 ---
 def save_history_to_gsheet(df):
     try:
-        # History 其實也可以改用 append_row，但原本的還算穩定，先不動大架構，只動庫存
         client = get_google_sheet_client()
         sheet = client.open_by_key(SHEET_ID).worksheet("History")
         sheet.clear()
@@ -183,7 +196,7 @@ if 'current_design' not in st.session_state: st.session_state['current_design'] 
 if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
-st.title("💎 IF Crystal 全雲端系統 (v9.11)")
+st.title("💎 IF Crystal 全雲端系統 (v9.12)")
 
 with st.sidebar:
     st.header("🔑 權限與統計")
@@ -240,29 +253,28 @@ if page == "📦 庫存與進貨":
                     final_unit_cost = total_cost_in / qty if qty > 0 else 0
                     
                     if r_type == "➕ 合併 (更新成本)":
-                        # 合併舊邏輯：修改現有資料 -> 整頁覆蓋
                         st.session_state['inventory'].at[idx, '庫存(顆)'] += qty
-                        st.session_state['inventory'].at[idx, '成本單價'] = final_unit_cost
+                        st.session_state['inventory'].at[idx, '成本單價'] = round(final_unit_cost, 2) # v9.12 修正：四捨五入
                         save_inventory_to_gsheet(st.session_state['inventory'])
                         log_act = f"補貨(總${total_cost_in:.2f})"
                     else:
-                        # v9.11 修改：新批號 -> 使用 append_row 直接追加到雲端
+                        # v9.12 修改：新批號追加邏輯
                         new_r = row.copy()
-                        new_r['庫存(顆)'] = qty
-                        new_r['進貨數量(顆)'] = qty
+                        new_r['庫存(顆)'] = int(qty)
+                        new_r['進貨數量(顆)'] = int(qty) # v9.12 修正：強制轉整數，避免 nan
                         new_r['進貨日期'] = str(date.today())
                         new_r['批號'] = new_batch
-                        new_r['成本單價'] = final_unit_cost
+                        new_r['成本單價'] = round(final_unit_cost, 2) # v9.12 修正：四捨五入
                         
-                        # 1. 先寫入雲端 (最重要)
+                        # 1. 寫入雲端
                         success = append_inventory_row(new_r)
                         
-                        # 2. 如果成功，才更新本地顯示 (這樣不用整頁重抓)
+                        # 2. 更新本地
                         if success:
                             st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
                             log_act = f"補貨新批(總${total_cost_in:.2f})"
                         else:
-                            st.stop() # 寫入失敗就停住，不要記歷史
+                            st.stop()
                     
                     log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'IN', 
                            '動作': log_act, '倉庫': row['倉庫'], '批號': new_batch if r_type == "📦 新批號" else row['批號'],
@@ -307,14 +319,17 @@ if page == "📦 庫存與進貨":
                 else:
                     final_unit_cost = total_cost_init / qty_init if qty_init > 0 else 0
                     
+                    # v9.12 修正：建檔資料格式
                     new_r = {
                         '編號': f"ST{int(time.time())}", '批號': batch, '倉庫': wh, '分類': cat, '名稱': name, 
                         '寬度mm': w_mm, '長度mm': l_mm, '形狀': shape, '五行': elem, 
-                        '進貨廠商': sup, '庫存(顆)': qty_init, '進貨日期': str(date.today()),
-                        '成本單價': final_unit_cost
+                        '進貨廠商': sup, 
+                        '庫存(顆)': int(qty_init), 
+                        '進貨數量(顆)': int(qty_init), # 強制轉整數
+                        '進貨日期': str(date.today()),
+                        '成本單價': round(final_unit_cost, 2) # 強制四捨五入
                     }
                     
-                    # v9.11 修改：建檔也改用 append_row 追加模式
                     success = append_inventory_row(new_r)
                     
                     if success:
@@ -414,7 +429,7 @@ if page == "📦 庫存與進貨":
                 nm = str(nm).strip()
                 st.session_state['inventory'].at[idx, '名稱'] = nm
                 st.session_state['inventory'].at[idx, '庫存(顆)'] = qt
-                st.session_state['inventory'].at[idx, '成本單價'] = final_unit_cost_save
+                st.session_state['inventory'].at[idx, '成本單價'] = round(final_unit_cost_save, 2) # v9.12 修正
                 st.session_state['inventory'].at[idx, '寬度mm'] = w_mm
                 st.session_state['inventory'].at[idx, '長度mm'] = l_mm
                 st.session_state['inventory'].at[idx, '五行'] = final_elem 
