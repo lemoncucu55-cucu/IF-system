@@ -186,7 +186,7 @@ if 'current_design' not in st.session_state: st.session_state['current_design'] 
 if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
-st.title("💎 IF Crystal 全雲端系統 (v9.12-安全性修正版)")
+st.title("💎 IF Crystal 全雲端系統 (v9.12-明細彙整版)")
 
 with st.sidebar:
     st.header("🔑 權限與統計")
@@ -271,17 +271,17 @@ if page == "📦 庫存與進貨":
     st.dataframe(df_display, use_container_width=True)
 
 # ------------------------------------------
-# 頁面 B: 紀錄查詢 (安全保護版)
+# 頁面 B: 紀錄查詢
 # ------------------------------------------
 elif page == "📜 紀錄查詢":
     df_h = st.session_state['history'].copy()
     if not st.session_state['admin_mode']:
-        df_h = df_h.drop(columns=['成本備註'], errors='ignore') # 訪客看不到成本備註
+        df_h = df_h.drop(columns=['成本備註'], errors='ignore')
     if not df_h.empty: df_h = df_h.iloc[::-1]
     st.dataframe(df_h, use_container_width=True)
 
 # ------------------------------------------
-# 頁面 C: 領料與設計單 (嚴格管理員權限 + 後台彙總)
+# 頁面 C: 領料與設計單 (新增品項加總功能)
 # ------------------------------------------
 elif page == "🧮 領料與設計單":
     st.subheader("🧮 領料與設計單")
@@ -306,24 +306,36 @@ elif page == "🧮 領料與設計單":
                     item['數量'] += qty
                     found = True; break
             if not found:
-                st.session_state['current_design'].append({'編號': row['編號'], '批號': row['批號'], '名稱': row['名稱'], '數量': qty, '倉庫': row.get('倉庫',''), '分類': row.get('分類',''), '規格': format_size(row), '廠商': row.get('進貨廠商','')})
+                st.session_state['current_design'].append({
+                    '編號': row['編號'], '批號': row['批號'], '名稱': row['名稱'], 
+                    '數量': qty, '倉庫': row.get('倉庫',''), '分類': row.get('分類',''), 
+                    '規格': format_size(row), '廠商': row.get('進貨廠商','')
+                })
             st.rerun()
 
     if st.session_state['current_design']:
         st.markdown("---")
         st.subheader("🛒 領料清單")
         delete_index = -1
-        grand_total_cost = 0 # 預先初始化總成本
+        grand_total_cost = 0 
         
         for i, item in enumerate(st.session_state['current_design']):
             mask = (st.session_state['inventory']['編號'] == item['編號']) & (st.session_state['inventory']['批號'] == item['批號'])
             u_cost = float(st.session_state['inventory'].loc[mask, '成本單價'].values[0]) if mask.any() else 0
-            grand_total_cost += u_cost * item['數量']
+            
+            # --- 計算該項目的小計 ---
+            item_subtotal = u_cost * item['數量']
+            grand_total_cost += item_subtotal
             
             with st.container():
                 c1, c2, c3, c4 = st.columns([4, 2, 2, 1])
-                # --- 安全檢查：只有管理員顯示單價 ---
-                cost_info = f" | 💰${u_cost:.2f}/顆" if st.session_state['admin_mode'] else ""
+                
+                # --- 安全檢查：只有管理員顯示單價與小計 ---
+                if st.session_state['admin_mode']:
+                    cost_info = f" | 💰${u_cost:.2f}/顆 | **小計: ${item_subtotal:.2f}**"
+                else:
+                    cost_info = ""
+                
                 c1.markdown(f"**{item['名稱']}** ({item.get('規格','')}) {cost_info}", unsafe_allow_html=True)
                 new_qty = c2.number_input("qty", min_value=1, value=int(item['數量']), label_visibility="collapsed", key=f"d_qty_{i}")
                 if new_qty != item['數量']: item['數量'] = new_qty; st.rerun()
@@ -333,11 +345,11 @@ elif page == "🧮 領料與設計單":
         if delete_index != -1: del st.session_state['current_design'][delete_index]; st.rerun()
 
         st.divider()
-        # --- 安全檢查：只有管理員顯示總金額 ---
+        # --- 安全檢查：只有管理員顯示最後總金額 ---
         if st.session_state['admin_mode']:
             st.metric("💰 本張設計單預估總成本", f"${grand_total_cost:,.2f}")
         else:
-            st.caption("🔒 成本明細已受保護，僅主管可見")
+            st.caption("🔒 成本明細與小計已受保護，僅主管可見")
 
         c_confirm, c_clear = st.columns([4, 1])
         if c_confirm.button("✅ 確認領出 (寫入雲端)", type="primary", use_container_width=True):
@@ -358,7 +370,7 @@ elif page == "🧮 領料與設計單":
                      log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': final_oid, '動作': '設計單領出', '倉庫': row.get('倉庫',''), '批號': x['批號'], '編號': x['編號'], '分類': row.get('分類',''), '名稱': x['名稱'], '規格': format_size(row), '廠商': row.get('進貨廠商',''), '數量變動': -x['數量'], '成本備註': final_n}
                      st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
 
-            # --- 後台彙總行 (不論權限皆寫入雲端，但 App 端會過濾顯示) ---
+            # --- 後台彙總行 ---
             summary_log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': final_oid, '動作': '🏷️ 單據總計', '名稱': '--- 整單彙整 ---', '數量變動': 0, '成本備註': f"💰 本單總計：${grand_total_cost:.2f}"}
             st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([summary_log])], ignore_index=True)
             
