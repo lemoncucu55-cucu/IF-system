@@ -151,10 +151,10 @@ if 'history' not in st.session_state:
     st.session_state['history'] = load_history_from_gsheet()
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
-if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
+if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"JM{date.today().strftime('%Y%m%d')}-01"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
-st.title("💎 IF Crystal 全雲端系統 (v9.12-撤銷功能版)")
+st.title("💎 IF Crystal 全雲端系統 (v9.12-修正版)")
 
 with st.sidebar:
     st.header("🔑 權限與統計")
@@ -247,7 +247,7 @@ if page == "📦 庫存與進貨":
                     save_inventory_to_gsheet(st.session_state['inventory'])
                     save_history_to_gsheet(st.session_state['history']); st.rerun()
 
-    with tab3: # 修改 (補回的功能)
+    with tab3: # 修改
         if not st.session_state['inventory'].empty:
             inv_edit = st.session_state['inventory'].copy()
             inv_edit['label'] = inv_edit.apply(make_inventory_label, axis=1)
@@ -329,24 +329,37 @@ elif page == "🧮 領料與設計單":
     if st.session_state['current_design']:
         st.divider()
         grand_total = 0
+        # --- 整合移除功能的區塊 ---
         for i, item in enumerate(st.session_state['current_design']):
             mask = (st.session_state['inventory']['編號'] == item['編號']) & (st.session_state['inventory']['批號'] == item['批號'])
             u_cost = float(st.session_state['inventory'].loc[mask, '成本單價'].values[0]) if mask.any() else 0
             grand_total += u_cost * item['數量']
-            st.write(f"🔸 {item['名稱']} ({item['規格']}) x{item['數量']} | 批號:{item['批號']}")
+            
+            # 使用 columns 讓按鈕跟文字排在同一行
+            col_txt, col_del = st.columns([5, 1])
+            col_txt.write(f"🔸 {item['名稱']} ({item['規格']}) x{item['數量']} | 批號:{item['批號']}")
+            
+            if col_del.button("❌ 移除", key=f"del_item_{i}"):
+                st.session_state['current_design'].pop(i)
+                st.rerun()
         
         if st.session_state['admin_mode']: st.metric("預估總成本", f"${grand_total:.2f}")
         
-        if st.button("✅ 確認領出", type="primary"):
+        c_exec, c_clear = st.columns([1, 1])
+        if c_exec.button("✅ 確認領出", type="primary", use_container_width=True):
             final_oid = st.session_state['order_id_input']
             for x in st.session_state['current_design']:
                 mask = (st.session_state['inventory']['編號'] == x['編號']) & (st.session_state['inventory']['批號'] == x['批號'])
                 if mask.any():
                     t_idx = st.session_state['inventory'][mask].index[0]
                     st.session_state['inventory'].at[t_idx, '庫存(顆)'] -= x['數量']
-                    log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': final_oid, '動作': '設計單領出', '編號': x['編號'], '批號': x['批號'], '名稱': x['名稱'], '數量變動': -x['數量'], '成本備註': st.session_state['order_note_input']}
+                    log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': final_oid, '動作': '設計單領出', '編號': x['編號'], '批號': x['批號'], '名稱': x['名稱'], '規格': x['規格'], '數量變動': -x['數量'], '成本備註': st.session_state['order_note_input']}
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
             save_inventory_to_gsheet(st.session_state['inventory'])
             save_history_to_gsheet(st.session_state['history'])
             st.session_state['current_design'] = []
-            st.success("完成！"); time.sleep(1); st.rerun()
+            st.success("領出成功！"); time.sleep(1); st.rerun()
+            
+        if c_clear.button("🗑️ 清空清單", use_container_width=True):
+            st.session_state['current_design'] = []
+            st.rerun()
