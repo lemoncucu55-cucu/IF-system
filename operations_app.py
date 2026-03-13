@@ -13,6 +13,7 @@ import numpy as np
 SHEET_ID = "1gf-pn034w0oZx8jWDUJvmIyHX_O7eHbiBb9diVSBX0Q"
 KEY_FILE = "google_key.json"
 
+# 庫存表欄位
 COLUMNS = [
     '編號', '批號', '倉庫', '分類', '名稱', 
     '寬度mm', '長度mm', '形狀', '五行', 
@@ -20,6 +21,7 @@ COLUMNS = [
     '庫存(顆)', '成本單價'
 ]
 
+# 歷史紀錄欄位
 HISTORY_COLUMNS = [
     '紀錄時間', '單號', '動作', '倉庫', '批號', '編號', '分類', '名稱', '規格', 
     '廠商', '數量變動', '成本備註'
@@ -143,7 +145,7 @@ if 'history' not in st.session_state:
     st.session_state['history'] = load_history_from_gsheet()
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
-if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}-{int(time.time())%1000}"
+if 'order_id_input' not in st.session_state: st.session_state['order_id_input'] = f"DES-{date.today().strftime('%Y%m%d')}"
 if 'order_note_input' not in st.session_state: st.session_state['order_note_input'] = ""
 
 st.title("💎 IF Crystal 全雲端系統 (v9.12-撤銷功能版)")
@@ -238,7 +240,7 @@ if page == "📦 庫存與進貨":
                     save_inventory_to_gsheet(st.session_state['inventory'])
                     save_history_to_gsheet(st.session_state['history']); st.rerun()
 
-    with tab3: # 修改 (包含價格修正)
+    with tab3: # 修改 (價格修正已開放)
         if not st.session_state['inventory'].empty:
             inv_edit = st.session_state['inventory'].copy()
             inv_edit['label'] = inv_edit.apply(make_inventory_label, axis=1)
@@ -254,7 +256,7 @@ if page == "📦 庫存與進貨":
                 en4 = c4.number_input("寬度mm", value=float(e_row['寬度mm']))
                 en5 = c5.number_input("長度mm", value=float(e_row['長度mm']))
                 en6 = c6.number_input("修正庫存", value=int(e_row['庫存(顆)']))
-                en7 = c7.number_input("修正單價成本", value=float(e_row['成本單價']), step=0.1)
+                en7 = c7.number_input("修正成本單價", value=float(e_row['成本單價']), step=0.1)
                 if st.form_submit_button("💾 儲存修改"):
                     st.session_state['inventory'].at[edit_idx, '名稱'] = en1
                     st.session_state['inventory'].at[edit_idx, '倉庫'] = en2
@@ -273,7 +275,7 @@ if page == "📦 庫存與進貨":
     st.dataframe(df_display, use_container_width=True)
 
 # ------------------------------------------
-# 頁面 B: 紀錄查詢 (權限過濾成本)
+# 頁面 B: 紀錄查詢
 # ------------------------------------------
 elif page == "📜 紀錄查詢":
     st.subheader("📜 歷史紀錄查詢")
@@ -283,7 +285,7 @@ elif page == "📜 紀錄查詢":
     else:
         df_h_rev = df_h.iloc[::-1]
         if not st.session_state['admin_mode']:
-            # 非管理員過濾掉總計列與備註
+            # 訪客看不到總計列與備註
             display_df = df_h_rev[df_h_rev['動作'] != '🏷️ 單據總計'].copy()
             st.dataframe(display_df.drop(columns=['成本備註'], errors='ignore'), use_container_width=True)
         else:
@@ -294,7 +296,7 @@ elif page == "📜 紀錄查詢":
                     c1, c2 = st.columns([4, 1])
                     c1.write(f"倉庫: {row['倉庫']} | 變動: {row['數量變動']} | 備註: {row['成本備註']}")
                     if row['動作'] != '🏷️ 單據總計':
-                        if c2.button("🗑️ 撤銷", key=f"rev_{idx}"):
+                        if c2.button("🗑️ 撤銷紀錄", key=f"rev_{idx}"):
                             mask = (st.session_state['inventory']['編號'] == row['編號']) & (st.session_state['inventory']['批號'] == row['批號'])
                             if mask.any():
                                 inv_idx = st.session_state['inventory'][mask].index[0]
@@ -304,7 +306,7 @@ elif page == "📜 紀錄查詢":
                                 save_history_to_gsheet(st.session_state['history']); st.rerun()
 
 # ------------------------------------------
-# 頁面 C: 領料與設計單 (Admin 專屬寫入後台)
+# 頁面 C: 領料與設計單 (包含刪除按鈕功能)
 # ------------------------------------------
 elif page == "🧮 領料與設計單":
     st.subheader("🧮 設計單模式")
@@ -312,6 +314,7 @@ elif page == "🧮 領料與設計單":
     st.session_state['order_id_input'] = c_oid.text_input("單號", st.session_state['order_id_input'])
     st.session_state['order_note_input'] = c_note.text_input("備註", st.session_state['order_note_input'])
     
+    # 選擇材料
     inv_sorted = st.session_state['inventory'].copy()
     inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
     sel = st.selectbox("選擇材料", inv_sorted['label'].tolist())
@@ -320,21 +323,45 @@ elif page == "🧮 領料與設計單":
     
     qty = st.number_input("加入數量", 1, max_value=max(1, int(row['庫存(顆)'])), value=1)
     if st.button("⬇️ 加入清單"):
-        st.session_state['current_design'].append({'編號': row['編號'], '批號': row['批號'], '名稱': row['名稱'], '數量': qty, '規格': format_size(row), '倉庫': row['倉庫'], '廠商': row['進貨廠商'], '分類': row['分類']})
+        st.session_state['current_design'].append({
+            '編號': row['編號'], '批號': row['批號'], '名稱': row['名稱'], 
+            '數量': qty, '規格': format_size(row), '倉庫': row['倉庫'], 
+            '廠商': row['進貨廠商'], '分類': row['分類']
+        })
         st.rerun()
 
+    # 清單顯示與刪除按鈕
     if st.session_state['current_design']:
         st.divider()
+        st.markdown("### 🛒 待領領料清單")
+        
         grand_total = 0
+        delete_idx = -1  # 記錄要刪除的品項索引
+        
         for i, item in enumerate(st.session_state['current_design']):
+            # 計算該項成本
             mask = (st.session_state['inventory']['編號'] == item['編號']) & (st.session_state['inventory']['批號'] == item['批號'])
             u_cost = float(st.session_state['inventory'].loc[mask, '成本單價'].values[0]) if mask.any() else 0
             grand_total += u_cost * item['數量']
-            st.write(f"🔸 {item['名稱']} ({item['規格']}) x{item['數量']}")
+            
+            # 使用兩欄佈置：內容與刪除按鈕
+            col_txt, col_btn = st.columns([5, 1])
+            with col_txt:
+                st.write(f"🔸 **{item['名稱']}** ({item['規格']}) x{item['數量']} | 批號: {item['批號']}")
+            with col_btn:
+                if st.button("🗑️", key=f"del_dsn_{i}_{item['編號']}"):
+                    delete_idx = i
         
-        if st.session_state['admin_mode']: st.metric("預估總成本", f"${grand_total:.2f}")
+        # 處理刪除邏輯
+        if delete_idx != -1:
+            st.session_state['current_design'].pop(delete_idx)
+            st.rerun()
+            
+        st.divider()
+        if st.session_state['admin_mode']: 
+            st.metric("預估總成本", f"${grand_total:,.2f}")
         
-        if st.button("✅ 確認領出", type="primary", use_container_width=True):
+        if st.button("✅ 確認領出 (同步至雲端)", type="primary", use_container_width=True):
             final_oid = st.session_state['order_id_input']
             for x in st.session_state['current_design']:
                 mask = (st.session_state['inventory']['編號'] == x['編號']) & (st.session_state['inventory']['批號'] == x['批號'])
@@ -344,7 +371,7 @@ elif page == "🧮 領料與設計單":
                     log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': final_oid, '動作': '設計單領出', '倉庫': x['倉庫'], '編號': x['編號'], '批號': x['批號'], '名稱': x['名稱'], '分類': x['分類'], '規格': x['規格'], '廠商': x['廠商'], '數量變動': -x['數量'], '成本備註': st.session_state['order_note_input']}
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
             
-            # 只有管理員模式會額外寫入一筆「整單彙整」到雲端後台
+            # 管理員模式才寫入總計列
             if st.session_state.get('admin_mode', False):
                 summary_log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': final_oid, '動作': '🏷️ 單據總計', '名稱': '--- 整單彙整 ---', '數量變動': 0, '成本備註': f"💰 管理員紀錄：本單總成本為 ${grand_total:.2f}"}
                 st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([summary_log])], ignore_index=True)
@@ -352,4 +379,6 @@ elif page == "🧮 領料與設計單":
             save_inventory_to_gsheet(st.session_state['inventory'])
             save_history_to_gsheet(st.session_state['history'])
             st.session_state['current_design'] = []
-            st.success("完成！"); time.sleep(1); st.rerun()
+            st.success("訂單完成並已上傳雲端！")
+            time.sleep(1)
+            st.rerun()
