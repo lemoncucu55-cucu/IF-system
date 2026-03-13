@@ -173,7 +173,7 @@ with st.sidebar:
 if page == "📦 庫存與進貨":
     tab1, tab2, tab4, tab3 = st.tabs(["🔄 補貨", "✨ 建檔", "📤 領用", "🛠️ 修改"])
     
-    with tab1: # 補貨
+    with tab1: # 補貨邏輯
         if not st.session_state['inventory'].empty:
             inv_sorted = st.session_state['inventory'].copy()
             inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
@@ -208,18 +208,37 @@ if page == "📦 庫存與進貨":
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                     save_history_to_gsheet(st.session_state['history']); st.rerun()
 
-    with tab2: # 建檔
+    with tab2: # ✨ 建檔 (修正：補回廠商欄位)
         with st.form("new_item"):
             c1, c2, c3 = st.columns(3)
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
             name = c2.text_input("輸入名稱")
             cat = c3.selectbox("分類", ["天然石", "配件", "耗材"])
-            qty_init, total_cost_init = st.number_input("初始數量", 1), st.number_input("💰 初始總成本", 0.0)
+            
+            c4, c5, c6 = st.columns(3)
+            qty_init = c4.number_input("初始數量", 1)
+            total_cost_init = c5.number_input("💰 初始總成本", 0.0)
+            supplier = c6.selectbox("進貨廠商", DEFAULT_SUPPLIERS) # 補回廠商選擇
+            
             if st.form_submit_button("建立商品"):
                 final_unit_cost = total_cost_init / qty_init if qty_init > 0 else 0
-                new_r = {'編號': f"ST{int(time.time())%100000}", '批號': '初始存貨', '倉庫': wh, '分類': cat, '名稱': name, '庫存(顆)': int(qty_init), '成本單價': round(final_unit_cost, 2), '進貨日期': str(date.today()), '寬度mm':0, '長度mm':0, '形狀':'圓珠', '五行':'金', '進貨數量(顆)':qty_init, '進貨廠商':'自用'}
+                new_r = {
+                    '編號': f"ST{int(time.time())%100000}", 
+                    '批號': '初始存貨', 
+                    '倉庫': wh, 
+                    '分類': cat, 
+                    '名稱': name, 
+                    '庫存(顆)': int(qty_init), 
+                    '成本單價': round(final_unit_cost, 2), 
+                    '進貨日期': str(date.today()), 
+                    '寬度mm': 0, '長度mm': 0, '形狀': '圓珠', '五行': '金', 
+                    '進貨數量(顆)': qty_init, 
+                    '進貨廠商': supplier # 使用選擇的廠商
+                }
                 if append_inventory_row(new_r):
                     st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
+                    st.success("✅ 商品建檔成功")
+                    time.sleep(1)
                     st.rerun()
 
     with tab4: # 快速領用
@@ -238,7 +257,7 @@ if page == "📦 庫存與進貨":
                     save_inventory_to_gsheet(st.session_state['inventory'])
                     save_history_to_gsheet(st.session_state['history']); st.rerun()
 
-    with tab3: # 修改 (包含單價修改)
+    with tab3: # 🛠️ 修改
         if not st.session_state['inventory'].empty:
             inv_edit = st.session_state['inventory'].copy()
             inv_edit['label'] = inv_edit.apply(make_inventory_label, axis=1)
@@ -254,7 +273,7 @@ if page == "📦 庫存與進貨":
                 en4 = c4.number_input("寬度mm", value=float(e_row['寬度mm']))
                 en5 = c5.number_input("長度mm", value=float(e_row['長度mm']))
                 en6 = c6.number_input("修正庫存", value=int(e_row['庫存(顆)']))
-                en7 = c7.number_input("修正單價成本", value=float(e_row['成本單價']), step=0.1)
+                en7 = c7.number_input("修正成本單價", value=float(e_row['成本單價']), step=0.1)
                 if st.form_submit_button("💾 儲存修改"):
                     st.session_state['inventory'].at[edit_idx, '名稱'] = en1
                     st.session_state['inventory'].at[edit_idx, '倉庫'] = en2
@@ -302,7 +321,7 @@ elif page == "📜 紀錄查詢":
                                 save_history_to_gsheet(st.session_state['history']); st.rerun()
 
 # ------------------------------------------
-# 頁面 C: 領料與設計單 (新增單品小計顯示)
+# 頁面 C: 領料與設計單
 # ------------------------------------------
 elif page == "🧮 領料與設計單":
     st.subheader("🧮 設計單模式")
@@ -310,7 +329,6 @@ elif page == "🧮 領料與設計單":
     st.session_state['order_id_input'] = c_oid.text_input("單號", st.session_state['order_id_input'])
     st.session_state['order_note_input'] = c_note.text_input("備註", st.session_state['order_note_input'])
     
-    # 選擇材料
     inv_sorted = st.session_state['inventory'].copy()
     inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
     sel = st.selectbox("選擇材料", inv_sorted['label'].tolist())
@@ -326,35 +344,27 @@ elif page == "🧮 領料與設計單":
         })
         st.rerun()
 
-    # 清單顯示區 (修正: 新增單品小計顯示)
     if st.session_state['current_design']:
         st.divider()
         st.markdown("### 🛒 待領領料清單")
-        
         grand_total = 0
         delete_idx = -1  
         
         for i, item in enumerate(st.session_state['current_design']):
-            # 計算成本資訊
             mask = (st.session_state['inventory']['編號'] == item['編號']) & (st.session_state['inventory']['批號'] == item['批號'])
             u_cost = float(st.session_state['inventory'].loc[mask, '成本單價'].values[0]) if mask.any() else 0
             item_total = u_cost * item['數量']
             grand_total += item_total
             
-            # 建立單品顯示字串
-            cost_detail = ""
-            if st.session_state['admin_mode']:
-                cost_detail = f" (💰單價:${u_cost:.2f} | **小計:${item_total:.2f}**)"
+            cost_detail = f" (💰單價:${u_cost:.2f} | **小計:${item_total:.2f}**)" if st.session_state['admin_mode'] else ""
 
             col_txt, col_btn = st.columns([5, 1])
             with col_txt:
-                # 顯示詳細品項與小計金額
                 st.markdown(f"🔸 **{item['名稱']}** ({item['規格']}) x{item['數量']} | 批號: {item['批號']}{cost_detail}")
             with col_btn:
                 if st.button("🗑️", key=f"del_dsn_{i}_{item['編號']}"):
                     delete_idx = i
         
-        # 刪除功能
         if delete_idx != -1:
             st.session_state['current_design'].pop(delete_idx)
             st.rerun()
