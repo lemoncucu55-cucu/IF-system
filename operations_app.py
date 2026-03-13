@@ -13,7 +13,6 @@ import numpy as np
 SHEET_ID = "1gf-pn034w0oZx8jWDUJvmIyHX_O7eHbiBb9diVSBX0Q"
 KEY_FILE = "google_key.json"
 
-# 庫存表欄位
 COLUMNS = [
     '編號', '批號', '倉庫', '分類', '名稱', 
     '寬度mm', '長度mm', '形狀', '五行', 
@@ -21,13 +20,11 @@ COLUMNS = [
     '庫存(顆)', '成本單價'
 ]
 
-# 歷史紀錄欄位
 HISTORY_COLUMNS = [
     '紀錄時間', '單號', '動作', '倉庫', '批號', '編號', '分類', '名稱', '規格', 
     '廠商', '數量變動', '成本備註'
 ]
 
-# 初始預設選項
 DEFAULT_WAREHOUSES = ["Imeng", "千畇"]
 DEFAULT_SUPPLIERS = ["小聰頭", "廠商A", "廠商B", "自用", "蝦皮", "淘寶", "TB-東吳天然石坊", "永安", "Rich"]
 DEFAULT_SHAPES = ["圓珠", "切角", "鑽切", "圓筒", "方體", "長柱", "不規則", "造型", "原礦"]
@@ -221,34 +218,50 @@ if page == "📦 庫存與進貨":
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                     save_history_to_gsheet(st.session_state['history']); st.rerun()
 
-    with tab2: # ✨ 建檔
+    with tab2: # ✨ 建檔 (修正：補齊所有手動輸入文字框)
         with st.form("new_item"):
             c1, c2, c3 = st.columns(3)
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
-            # 名稱記憶選單
-            n_opts = get_dynamic_options('名稱', ["水晶"])
-            n_sel = c2.selectbox("名稱 (選單)", n_opts)
-            n_final = c2.text_input("輸入新名稱") if n_sel == "➕ 手動輸入" else n_sel
+            
+            # 1. 名稱
+            with c2:
+                n_opts = get_dynamic_options('名稱', ["水晶"])
+                n_sel = st.selectbox("名稱 (選單)", n_opts)
+                n_custom = ""
+                if n_sel == "➕ 手動輸入":
+                    n_custom = st.text_input("輸入新名稱", placeholder="例如：OT扣-麥穗")
+                n_final = n_custom if n_sel == "➕ 手動輸入" else n_sel
+                
             cat = c3.selectbox("分類", ["天然石", "配件", "耗材"])
             
             c4, c5, c6 = st.columns(3)
-            # 形狀與五行記憶選單
-            sh_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
-            sh_sel = c4.selectbox("形狀/規格 (選單)", sh_opts)
-            sh_final = c4.text_input("輸入新規格") if sh_sel == "➕ 手動輸入" else sh_sel
-            el_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
-            el_sel = c5.selectbox("五行/顏色 (選單)", el_opts)
-            el_final = c5.text_input("輸入新顏色") if el_sel == "➕ 手動輸入" else el_sel
             
-            # 廠商手動輸入欄位緊貼下方
+            # 2. 形狀/規格
+            with c4:
+                sh_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
+                sh_sel = st.selectbox("形狀/規格 (選單)", sh_opts)
+                sh_custom = ""
+                if sh_sel == "➕ 手動輸入":
+                    sh_custom = st.text_input("輸入新規格") # <--- 修正處
+                sh_final = sh_custom if sh_sel == "➕ 手動輸入" else sh_sel
+                
+            # 3. 五行/顏色
+            with c5:
+                el_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
+                el_sel = st.selectbox("五行/顏色 (選單)", el_opts)
+                el_custom = ""
+                if el_sel == "➕ 手動輸入":
+                    el_custom = st.text_input("輸入新顏色")
+                el_final = el_custom if el_sel == "➕ 手動輸入" else el_sel
+            
+            # 4. 進貨廠商
             with c6:
                 su_opts = get_dynamic_options('進貨廠商', DEFAULT_SUPPLIERS)
                 su_sel = st.selectbox("進貨廠商 (選單)", su_opts)
-                su_final = ""
+                su_custom = ""
                 if su_sel == "➕ 手動輸入":
-                    su_final = st.text_input("請輸入新廠商名稱")
-                else:
-                    su_final = su_sel
+                    su_custom = st.text_input("請輸入新廠商名稱")
+                su_final = su_custom if su_sel == "➕ 手動輸入" else su_sel
 
             c7, c8, c9, c10 = st.columns(4)
             w_mm, l_mm = c7.number_input("寬度mm", 0.0, step=0.1), c8.number_input("長度mm", 0.0, step=0.1)
@@ -292,18 +305,38 @@ if page == "📦 庫存與進貨":
             e_row = st.session_state['inventory'].loc[idx]
             with st.form("edit_form"):
                 c1, c2, c3 = st.columns(3)
-                n_m_opts = get_dynamic_options('名稱', ["水晶"])
-                n_m_sel = c1.selectbox("名稱", n_m_opts, index=n_m_opts.index(e_row['名稱']) if e_row['名稱'] in n_m_opts else 0)
-                n_m_final = c1.text_input("新名稱") if n_m_sel == "➕ 手動輸入" else n_m_sel
+                
+                # 名稱修改
+                with c1:
+                    n_m_opts = get_dynamic_options('名稱', ["水晶"])
+                    n_m_sel = st.selectbox("名稱", n_m_opts, index=n_m_opts.index(e_row['名稱']) if e_row['名稱'] in n_m_opts else 0)
+                    n_m_custom = ""
+                    if n_m_sel == "➕ 手動輸入":
+                        n_m_custom = st.text_input("新名稱")
+                    n_m_final = n_m_custom if n_m_sel == "➕ 手動輸入" else n_m_sel
+                    
                 ew, el = c2.number_input("寬度mm", value=float(e_row['寬度mm'])), c3.number_input("長度mm", value=float(e_row['長度mm']))
                 
                 c4, c5, c6, c7 = st.columns(4)
-                sh_m_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
-                sh_m_sel = c4.selectbox("形狀", sh_m_opts, index=sh_m_opts.index(e_row['形狀']) if e_row['形狀'] in sh_m_opts else 0)
-                sh_m_final = c4.text_input("新規格") if sh_m_sel == "➕ 手動輸入" else sh_m_sel
-                el_m_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
-                el_m_sel = c5.selectbox("五行/顏色", el_m_opts, index=el_m_opts.index(e_row['五行']) if e_row['五行'] in el_m_opts else 0)
-                el_m_final = c5.text_input("新顏色") if el_m_sel == "➕ 手動輸入" else el_m_sel
+                
+                # 形狀修改
+                with c4:
+                    sh_m_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
+                    sh_m_sel = st.selectbox("形狀", sh_m_opts, index=sh_m_opts.index(e_row['形狀']) if e_row['形狀'] in sh_m_opts else 0)
+                    sh_m_custom = ""
+                    if sh_m_sel == "➕ 手動輸入":
+                        sh_m_custom = st.text_input("新規格")
+                    sh_m_final = sh_m_custom if sh_m_sel == "➕ 手動輸入" else sh_m_sel
+                    
+                # 五行修改
+                with c5:
+                    el_m_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
+                    el_m_sel = st.selectbox("五行/顏色", el_m_opts, index=el_m_opts.index(e_row['五行']) if e_row['五行'] in el_m_opts else 0)
+                    el_m_custom = ""
+                    if el_m_sel == "➕ 手動輸入":
+                        el_m_custom = st.text_input("新顏色")
+                    el_m_final = el_m_custom if el_m_sel == "➕ 手動輸入" else el_m_sel
+                    
                 en6, en7 = c6.number_input("修正庫存", value=int(e_row['庫存(顆)'])), c7.number_input("單價成本", value=float(e_row['成本單價']))
                 
                 if st.form_submit_button("💾 儲存修改"):
@@ -320,7 +353,7 @@ if page == "📦 庫存與進貨":
     st.dataframe(df_dis, use_container_width=True)
 
 # ------------------------------------------
-# 頁面 B: 紀錄查詢 (含標籤批次管理)
+# 頁面 B: 紀錄查詢
 # ------------------------------------------
 elif page == "📜 紀錄查詢":
     st.subheader("📜 歷史紀錄與撤銷")
@@ -345,7 +378,7 @@ elif page == "📜 紀錄查詢":
                                 save_inventory_to_gsheet(st.session_state['inventory'])
                                 save_history_to_gsheet(st.session_state['history']); st.rerun()
 
-    # --- 批次標籤管理 (修正選單顯示問題) ---
+    # --- 批次標籤管理 ---
     if st.session_state['admin_mode']:
         st.divider()
         with st.expander("🛠️ 選單標籤管理 (批次更名/清理)"):
