@@ -208,7 +208,7 @@ if page == "📦 庫存與進貨":
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                     save_history_to_gsheet(st.session_state['history']); st.rerun()
 
-    with tab2: # ✨ 建檔 (修正：廠商支援手動輸入)
+    with tab2: # ✨ 建檔 (修正：新廠商輸入框放在選單正下方)
         with st.form("new_item"):
             c1, c2, c3 = st.columns(3)
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
@@ -219,20 +219,21 @@ if page == "📦 庫存與進貨":
             qty_init = c4.number_input("初始數量", 1)
             total_cost_init = c5.number_input("💰 初始總成本", 0.0)
             
-            # 廠商選單增加手動輸入選項
-            supplier_opts = ["➕ 手動輸入"] + DEFAULT_SUPPLIERS
-            supplier_sel = c6.selectbox("進貨廠商", supplier_opts)
-            
-            # 如果選擇手動輸入，顯示文字框
-            custom_supplier = ""
-            if supplier_sel == "➕ 手動輸入":
-                custom_supplier = st.text_input("請輸入新廠商名稱")
+            # 在 c6 裡面進行垂直佈局
+            with c6:
+                supplier_opts = ["➕ 手動輸入"] + DEFAULT_SUPPLIERS
+                supplier_sel = st.selectbox("進貨廠商", supplier_opts)
+                
+                # 手動輸入框緊跟在選單下方
+                custom_supplier = ""
+                if supplier_sel == "➕ 手動輸入":
+                    custom_supplier = st.text_input("請輸入新廠商名稱", placeholder="例如：J.L.N手作材料坊")
             
             if st.form_submit_button("建立商品"):
                 final_supplier = custom_supplier if supplier_sel == "➕ 手動輸入" else supplier_sel
                 
                 if supplier_sel == "➕ 手動輸入" and not custom_supplier.strip():
-                    st.error("請輸入廠商名稱！")
+                    st.error("❌ 請輸入廠商名稱！")
                     st.stop()
 
                 final_unit_cost = total_cost_init / qty_init if qty_init > 0 else 0
@@ -251,7 +252,7 @@ if page == "📦 庫存與進貨":
                 }
                 if append_inventory_row(new_r):
                     st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
-                    st.success(f"✅ 商品已建立（廠商：{final_supplier}）")
+                    st.success(f"✅ 商品建立成功（廠商：{final_supplier}）")
                     time.sleep(1)
                     st.rerun()
 
