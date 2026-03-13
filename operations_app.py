@@ -173,7 +173,7 @@ with st.sidebar:
 if page == "📦 庫存與進貨":
     tab1, tab2, tab4, tab3 = st.tabs(["🔄 補貨", "✨ 建檔", "📤 領用", "🛠️ 修改"])
     
-    with tab1: # 補貨邏輯
+    with tab1: # 補貨
         if not st.session_state['inventory'].empty:
             inv_sorted = st.session_state['inventory'].copy()
             inv_sorted['label'] = inv_sorted.apply(make_inventory_label, axis=1)
@@ -208,7 +208,7 @@ if page == "📦 庫存與進貨":
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                     save_history_to_gsheet(st.session_state['history']); st.rerun()
 
-    with tab2: # ✨ 建檔 (修正：補回廠商欄位)
+    with tab2: # ✨ 建檔 (修正：廠商支援手動輸入)
         with st.form("new_item"):
             c1, c2, c3 = st.columns(3)
             wh = c1.selectbox("倉庫", DEFAULT_WAREHOUSES)
@@ -218,9 +218,23 @@ if page == "📦 庫存與進貨":
             c4, c5, c6 = st.columns(3)
             qty_init = c4.number_input("初始數量", 1)
             total_cost_init = c5.number_input("💰 初始總成本", 0.0)
-            supplier = c6.selectbox("進貨廠商", DEFAULT_SUPPLIERS) # 補回廠商選擇
+            
+            # 廠商選單增加手動輸入選項
+            supplier_opts = ["➕ 手動輸入"] + DEFAULT_SUPPLIERS
+            supplier_sel = c6.selectbox("進貨廠商", supplier_opts)
+            
+            # 如果選擇手動輸入，顯示文字框
+            custom_supplier = ""
+            if supplier_sel == "➕ 手動輸入":
+                custom_supplier = st.text_input("請輸入新廠商名稱")
             
             if st.form_submit_button("建立商品"):
+                final_supplier = custom_supplier if supplier_sel == "➕ 手動輸入" else supplier_sel
+                
+                if supplier_sel == "➕ 手動輸入" and not custom_supplier.strip():
+                    st.error("請輸入廠商名稱！")
+                    st.stop()
+
                 final_unit_cost = total_cost_init / qty_init if qty_init > 0 else 0
                 new_r = {
                     '編號': f"ST{int(time.time())%100000}", 
@@ -233,11 +247,11 @@ if page == "📦 庫存與進貨":
                     '進貨日期': str(date.today()), 
                     '寬度mm': 0, '長度mm': 0, '形狀': '圓珠', '五行': '金', 
                     '進貨數量(顆)': qty_init, 
-                    '進貨廠商': supplier # 使用選擇的廠商
+                    '進貨廠商': final_supplier
                 }
                 if append_inventory_row(new_r):
                     st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
-                    st.success("✅ 商品建檔成功")
+                    st.success(f"✅ 商品已建立（廠商：{final_supplier}）")
                     time.sleep(1)
                     st.rerun()
 
@@ -347,6 +361,7 @@ elif page == "🧮 領料與設計單":
     if st.session_state['current_design']:
         st.divider()
         st.markdown("### 🛒 待領領料清單")
+        
         grand_total = 0
         delete_idx = -1  
         
