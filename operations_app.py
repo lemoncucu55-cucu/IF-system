@@ -794,62 +794,68 @@ def _page_history() -> None:
 
 # ══════════════════════════════════════════════════════════════
 # § 7  頁面 C：領料與設計單
+#      ↳ 不使用 @st.fragment，全頁 st.rerun() 確保 current_design 正確更新
 # ══════════════════════════════════════════════════════════════
 
-@st.fragment
-def _design_add_panel() -> None:
-    """選料並加入清單，只重跑此 fragment。"""
+def _page_design() -> None:
+    st.subheader("🧮 設計單模式")
     inv = st.session_state["inventory"]
+
+    # ── 單號 / 備註 ───────────────────────────────────────────
+    ca, cb = st.columns([1, 2])
+    st.session_state["order_id_input"]   = ca.text_input("單號",  st.session_state["order_id_input"])
+    st.session_state["order_note_input"] = cb.text_input("備註",  st.session_state["order_note_input"])
+    st.markdown("---")
+
+    # ── 選料區 ────────────────────────────────────────────────
     if inv.empty:
-        st.info("目前庫存為空。")
-        return
+        st.info("目前庫存為空，請先至「庫存與進貨」建檔。")
+    else:
+        df_l        = labelled_inv(inv, show_cost=st.session_state["admin_mode"])
+        label       = st.selectbox("材料選擇", df_l["label"].tolist(), key="ds_sel")
+        idx, row_ds = row_by_label(df_l, label, inv)
+        qty_ds      = st.number_input("數量", min_value=1,
+                                       max_value=max(1, int(row_ds["庫存(顆)"])),
+                                       value=1, key="ds_qty")
 
-    df_l  = labelled_inv(inv, show_cost=st.session_state["admin_mode"])
-    label = st.selectbox("材料選擇", df_l["label"].tolist(), key="ds_sel")
-    idx, row_ds = row_by_label(df_l, label, inv)
-    qty_ds = st.number_input("數量", min_value=1,
-                              max_value=max(1, int(row_ds["庫存(顆)"])), value=1)
+        if st.button("⬇️ 加入清單", key="ds_add_btn"):
+            st.session_state["current_design"].append({
+                "編號": row_ds["編號"],
+                "批號": row_ds["批號"],
+                "名稱": row_ds["名稱"],
+                "數量": int(qty_ds),
+                "規格": format_size(row_ds),
+                "五行": row_ds["五行"],
+                "倉庫": row_ds["倉庫"],
+                "廠商": row_ds["進貨廠商"],
+                "分類": row_ds["分類"],
+            })
+            st.rerun()
 
-    if st.button("⬇️ 加入清單"):
-        st.session_state["current_design"].append({
-            "編號": row_ds["編號"],
-            "批號": row_ds["批號"],
-            "名稱": row_ds["名稱"],
-            "數量": qty_ds,
-            "規格": format_size(row_ds),
-            "五行": row_ds["五行"],
-            "倉庫": row_ds["倉庫"],
-            "廠商": row_ds["進貨廠商"],
-            "分類": row_ds["分類"],
-        })
-        st.rerun(scope="fragment")
+    st.markdown("---")
 
-
-@st.fragment
-def _design_list_panel() -> None:
-    """清單預覽 + 確認領出，只重跑此 fragment。"""
+    # ── 清單預覽 ──────────────────────────────────────────────
     design = st.session_state["current_design"]
     if not design:
         st.info("清單為空，請先加入材料。")
         return
 
-    inv        = st.session_state["inventory"]
     total_cost = calc_design_cost(design, inv)
 
     st.markdown("#### 📋 設計清單")
     for i, item in enumerate(design):
         col_t, col_del = st.columns([5, 1])
         col_t.write(f"🔸 [{item['五行']}] {item['名稱']} ({item['規格']}) x{item['數量']}")
-        if col_del.button("🗑️", key=f"del_{i}"):
+        if col_del.button("🗑️", key=f"des_del_{i}"):
             st.session_state["current_design"].pop(i)
-            st.rerun(scope="fragment")
+            st.rerun()
 
     if st.session_state["admin_mode"]:
         st.metric("預估總成本", f"${total_cost:.2f}")
 
     if st.button("✅ 確認領出", type="primary", use_container_width=True):
-        oid  = st.session_state["order_id_input"]
-        note = st.session_state["order_note_input"]
+        oid     = st.session_state["order_id_input"]
+        note    = st.session_state["order_note_input"]
         upd_inv = inv.copy()
 
         for x in design:
@@ -867,18 +873,7 @@ def _design_list_panel() -> None:
         save_history(st.session_state["history"])
         st.session_state["current_design"] = []
         st.success("✅ 訂單已完成！")
-        st.rerun(scope="fragment")
-
-
-def _page_design() -> None:
-    st.subheader("🧮 設計單模式")
-    ca, cb = st.columns([1, 2])
-    st.session_state["order_id_input"]   = ca.text_input("單號",  st.session_state["order_id_input"])
-    st.session_state["order_note_input"] = cb.text_input("備註",  st.session_state["order_note_input"])
-    st.markdown("---")
-    _design_add_panel()
-    st.markdown("---")
-    _design_list_panel()
+        st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════
