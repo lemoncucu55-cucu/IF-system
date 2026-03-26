@@ -583,6 +583,182 @@ def _hist_search_panel() -> None:
     st.dataframe(display, use_container_width=True)
 
 
+# ── 刪除紀錄並還原庫存的核心邏輯（純函式，不依賴 Streamlit）──────
+
+def _restorable_actions() -> frozenset[str]:
+    """定義「刪除時需要還原庫存」的動作清單。"""
+    return frozenset(["快速領用", "設計單領出", "補貨(合併)", "補貨(新批)"])
+
+
+def _reverse_qty(qty_delta: int, action: str) -> int:
+    """計算還原庫存時應加回的數量（正數 = 加回，負數 = 扣除）。"""
+    try:
+        return -int(float(qty_delta))
+    except Exception:
+        return 0
+
+
+def _apply_stock_restore(
+    inv: pd.DataFrame,
+    row: pd.Series,
+    reverse_qty: int,
+) -> tuple[pd.DataFrame, str]:
+    """
+    嘗試找到對應的庫存列並調整數量。
+    回傳 (更新後的 DataFrame, 操作說明文字)。
+    """
+    inv = inv.copy()
+    編號 = str(row.get("編號", "")).strip()
+    批號 = str(row.get("批號", "")).strip()
+
+    # 優先用編號+批號精確比對
+    mask = (inv["編號"].astype(str).str.strip() == 編號) & \
+           (inv["批號"].astype(str).str.strip() == 批號)
+
+    if mask.any():
+        idx = inv[mask].index[0]
+        inv.at[idx, "庫存(顆)"] = max(0, int(float(inv.at[idx, "庫存(顆)"])) + reverse_qty)
+        return inv, f"庫存已調整 {reverse_qty:+d} 顆（{row.get('名稱','')} / 批號:{批號}）"
+    else:
+        return inv, f"⚠️ 找不到對應庫存列（編號:{編號} 批號:{批號}），庫存未變動"
+
+
+@st.fragment
+def _hist_delete_panel() -> None:
+    """管理員專用：刪除歷史紀錄並選擇是否還原庫存。"""
+    df_h = st.session_state["history"]
+    inv  = st.session_state["inventory"]
+
+    with st.expander("🗑️ 刪除歷史紀錄"):
+        if df_h.empty:
+            st.info("目前尚無歷史紀錄。")
+            return
+
+        st.caption("選擇要刪除的紀錄。若該筆動作涉及庫存異動，可同時還原庫存數量。")
+
+        # ── 篩選欄位 ──────────────────────────────────────────────
+        c1, c2 = st.columns(2)
+        filter_kw = c1.text_input("🔍 篩選（名稱 / 單號）", key="del_filter")
+        filter_action = c2.selectbox(
+            "篩選動作類型",
+            ["全部"] + sorted(df_h["動作"].astype(str).unique().tolist()),
+            key="del_action_filter",
+        )
+
+        display = df_h.copy()
+        display.index.name = "原始序號"
+        display = display.reset_index()   # 保留原始 index 供後續刪除用
+
+        if filter_kw.strip():
+            mask = (
+                display["名稱"].astype(str).str.contains(filter_kw, na=False)
+                | display["單號"].astype(str).str.contains(filter_kw, na=False)
+            )
+            display = display[mask]
+        if filter_action != "全部":
+            display = display[display["動作"].astype(str) == filter_action]
+
+        if display.empty:
+            st.info("沒有符合條件的紀錄。")
+            return
+
+        # ── 選擇要刪除的列 ────────────────────────────────────────
+        # 顯示最新在前
+        display_show = display.iloc[::-1].reset_index(drop=True)
+        display_show["選擇"] = False
+
+        edited = st.data_editor(
+            display_show[["選擇", "原始序號", "紀錄時間", "動作", "單號",
+                           "名稱", "批號", "數量變動", "成本備註"]],
+            column_config={"選擇": st.column_config.CheckboxColumn("✔ 勾選刪除", default=False)},
+            hide_index=True,
+            use_container_width=True,
+            key="del_editor",
+        )
+
+        selected_rows = edited[edited["選擇"] == True]
+        n_selected    = len(selected_rows)
+
+        if n_selected == 0:
+            st.info("請勾選要刪除的紀錄。")
+            return
+
+        # ── 還原庫存選項 ──────────────────────────────────────────
+        restorable = _restorable_actions()
+        has_restorable = selected_rows["動作"].astype(str).isin(restorable).any()
+
+        restore_stock = False
+        if has_restorable:
+            restore_stock = st.checkbox(
+                "✅ 同時還原庫存數量（僅對領用 / 補貨類動作有效）",
+                value=True,
+                key="del_restore_cb",
+            )
+
+        # ── 預覽影響 ──────────────────────────────────────────────
+        if restore_stock and has_restorable:
+            st.markdown("**📦 預覽庫存還原：**")
+            preview_inv = inv.copy()
+            for _, r in selected_rows.iterrows():
+                action = str(r.get("動作", ""))
+                if action not in restorable:
+                    continue
+                qty_delta   = r.get("數量變動", 0)
+                reverse_qty = _reverse_qty(qty_delta, action)
+                if reverse_qty == 0:
+                    continue
+                preview_inv, msg = _apply_stock_restore(preview_inv, r, reverse_qty)
+                st.caption(f"  • {msg}")
+
+        st.markdown("---")
+        col_warn, col_btn = st.columns([3, 1])
+        col_warn.warning(f"即將刪除 **{n_selected}** 筆紀錄，此操作無法復原。")
+
+        if col_btn.button("🗑️ 確認刪除", type="primary", key="del_confirm_btn"):
+            original_indices = selected_rows["原始序號"].tolist()
+            upd_inv = inv.copy()
+            restore_msgs = []
+
+            for orig_idx in original_indices:
+                r      = df_h.loc[orig_idx]
+                action = str(r.get("動作", ""))
+
+                if restore_stock and action in restorable:
+                    qty_delta   = r.get("數量變動", 0)
+                    reverse_qty = _reverse_qty(qty_delta, action)
+                    if reverse_qty != 0:
+                        upd_inv, msg = _apply_stock_restore(upd_inv, r, reverse_qty)
+                        restore_msgs.append(msg)
+
+            # 刪除歷史紀錄列
+            upd_hist = df_h.drop(index=original_indices).reset_index(drop=True)
+
+            # 寫入並記錄這次刪除操作本身
+            operator_log = make_log(
+                "🗑️ 刪除紀錄",
+                {"倉庫": "", "批號": "", "編號": "", "分類": "",
+                 "名稱": f"刪除 {n_selected} 筆", "進貨廠商": ""},
+                0,
+                note=f"還原庫存:{restore_stock} | 刪除序號:{original_indices}",
+            )
+            upd_hist = pd.concat(
+                [upd_hist, pd.DataFrame([operator_log])], ignore_index=True
+            )
+
+            st.session_state["inventory"] = upd_inv
+            st.session_state["history"]   = upd_hist
+
+            if restore_stock and restore_msgs:
+                save_inventory(upd_inv)
+            save_history(upd_hist)
+
+            result_msg = f"✅ 已刪除 {n_selected} 筆紀錄"
+            if restore_stock and restore_msgs:
+                result_msg += f"，並還原 {len(restore_msgs)} 筆庫存"
+            st.success(result_msg)
+            st.rerun(scope="fragment")
+
+
 @st.fragment
 def _hist_rename_panel() -> None:
     """管理員專用：批次標籤更名。"""
@@ -612,6 +788,7 @@ def _page_history() -> None:
     st.subheader("📜 歷史紀錄")
     _hist_search_panel()
     if st.session_state.get("admin_mode"):
+        _hist_delete_panel()
         _hist_rename_panel()
 
 
