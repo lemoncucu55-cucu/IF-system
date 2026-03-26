@@ -840,18 +840,59 @@ def _page_design() -> None:
         st.info("清單為空，請先加入材料。")
         return
 
-    total_cost = calc_design_cost(design, inv)
+    # ── 逐項計算單價與小計 ────────────────────────────────────
+    line_items = []
+    for item in design:
+        mask = (inv["編號"] == item["編號"]) & (inv["批號"] == item["批號"])
+        unit = float(inv.loc[mask, "成本單價"].values[0]) if mask.any() else 0.0
+        line_items.append({**item, "unit": unit, "subtotal": unit * item["數量"]})
+    total_cost = sum(x["subtotal"] for x in line_items)
 
+    # ── 清單表頭 ──────────────────────────────────────────────
     st.markdown("#### 📋 設計清單")
-    for i, item in enumerate(design):
-        col_t, col_del = st.columns([5, 1])
-        col_t.write(f"🔸 [{item['五行']}] {item['名稱']} ({item['規格']}) x{item['數量']}")
-        if col_del.button("🗑️", key=f"des_del_{i}"):
+
+    # 判斷是否顯示成本（主管模式才顯示）
+    show_cost = st.session_state["admin_mode"]
+
+    if show_cost:
+        hc1, hc2, hc3, hc4, hc5 = st.columns([4, 1, 1, 1, 1])
+        hc1.caption("品項")
+        hc2.caption("數量")
+        hc3.caption("單價")
+        hc4.caption("小計")
+        hc5.caption("")
+    else:
+        hc1, hc2, hc5 = st.columns([5, 1, 1])
+        hc1.caption("品項")
+        hc2.caption("數量")
+        hc5.caption("")
+
+    st.divider()
+
+    for i, item in enumerate(line_items):
+        if show_cost:
+            c1, c2, c3, c4, c5 = st.columns([4, 1, 1, 1, 1])
+            c1.write(f"🔸 [{item['五行']}] {item['名稱']} ({item['規格']})")
+            c2.write(f"x **{item['數量']}**")
+            c3.write(f"${item['unit']:.2f}")
+            c4.write(f"**${item['subtotal']:.2f}**")
+        else:
+            c1, c2, c5 = st.columns([5, 1, 1])
+            c1.write(f"🔸 [{item['五行']}] {item['名稱']} ({item['規格']})")
+            c2.write(f"x **{item['數量']}**")
+        if c5.button("🗑️", key=f"des_del_{i}"):
             st.session_state["current_design"].pop(i)
             st.rerun()
 
-    if st.session_state["admin_mode"]:
-        st.metric("預估總成本", f"${total_cost:.2f}")
+    st.divider()
+
+    # ── 合計列（主管才顯示金額）─────────────────────────────
+    if show_cost:
+        tot1, tot2 = st.columns([4, 2])
+        tot1.markdown(f"**共 {sum(x['數量'] for x in line_items)} 顆**")
+        tot2.markdown(f"### 💰 合計：${total_cost:.2f}")
+    else:
+        st.markdown(f"**共 {sum(x['數量'] for x in line_items)} 顆**")
 
     if st.button("✅ 確認領出", type="primary", use_container_width=True):
         oid     = st.session_state["order_id_input"]
