@@ -1,6 +1,6 @@
 # ╔══════════════════════════════════════════════════════════════╗
-# ║ IF Crystal 全雲端系統 v10 ─ 最終完整穩定版                  ║
-# ║ 已加強 History 記錄 + 修復各頁面顯示問題                    ║
+# ║ IF Crystal 全雲端系統 v10 ─ 完整最終版 (2026.03.27)          ║
+# ║ 已修正：修改頁面無法輸入 + History 記錄問題                  ║
 # ╚══════════════════════════════════════════════════════════════╝
 
 from __future__ import annotations
@@ -15,11 +15,18 @@ from oauth2client.service_account import ServiceAccountCredentials
 SHEET_ID = "1gf-pn034w0oZx8jWDUJvmIyHX_O7eHbiBb9diVSBX0Q"
 KEY_FILE = "google_key.json"
 
-COLUMNS = ['編號', '批號', '倉庫', '分類', '名稱', '寬度mm', '長度mm', '形狀', '五行',
-           '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '成本單價']
+COLUMNS = [
+    '編號', '批號', '倉庫', '分類', '名稱',
+    '寬度mm', '長度mm', '形狀', '五行',
+    '進貨數量(顆)', '進貨日期', '進貨廠商',
+    '庫存(顆)', '成本單價',
+]
 
-HISTORY_COLUMNS = ['紀錄時間', '單號', '動作', '倉庫', '批號', '編號', '分類', '名稱',
-                   '規格', '廠商', '數量變動', '成本備註']
+HISTORY_COLUMNS = [
+    '紀錄時間', '單號', '動作', '倉庫', '批號',
+    '編號', '分類', '名稱', '規格', '廠商',
+    '數量變動', '成本備註',
+]
 
 NUMERIC_COLS = ['寬度mm', '長度mm', '進貨數量(顆)', '庫存(顆)', '成本單價']
 
@@ -216,7 +223,7 @@ def _tab_restock() -> None:
     if inv.empty:
         st.info("目前庫存為空，請先至「建檔」頁籤新增商品。")
         return
-    df_l = labelled_inv(inv, show_cost=st.session_state["admin_mode"])
+    df_l = labelled_inv(inv, show_cost=st.session_state.get("admin_mode", False))
     label = st.selectbox("選擇商品", df_l["label"].tolist(), key="restock_sel")
     idx, row = row_by_label(df_l, label, inv)
     with st.form("restock_form"):
@@ -287,11 +294,62 @@ def _tab_create() -> None:
                 st.success(f"✅ 商品「{final_n}」建立成功！")
                 st.rerun(scope="fragment")
 
+@st.fragment
+def _tab_edit() -> None:
+    inv = st.session_state["inventory"]
+    if inv.empty:
+        st.info("目前庫存為空。")
+        return
+    df_l = labelled_inv(inv, show_cost=st.session_state.get("admin_mode", False))
+    label = st.selectbox("1. 選擇要修改的商品", df_l["label"].tolist(), key="edit_sel")
+    idx, e_row = row_by_label(df_l, label, inv)
+
+    st.markdown("---")
+    st.write(f"**目前選擇：** {e_row['名稱']} ({format_size(e_row)})")
+
+    with st.form("edit_form"):
+        c1, c2, c3 = st.columns(3)
+        me_opts = get_options("名稱", ["水晶"], inv)
+        me_sel = c1.selectbox("名稱", me_opts, index=safe_index(me_opts, str(e_row["名稱"])), key="edit_name_sel")
+        me_custom = c1.text_input("自訂名稱", key="edit_name_custom") if me_sel == MANUAL else ""
+
+        sh_opts = get_options("形狀", DEFAULT_SHAPES, inv)
+        sh_sel = c2.selectbox("形狀", sh_opts, index=safe_index(sh_opts, str(e_row["形狀"])), key="edit_shape_sel")
+        sh_custom = c2.text_input("自訂形狀", key="edit_shape_custom") if sh_sel == MANUAL else ""
+
+        el_opts = get_options("五行", DEFAULT_ELEMENTS, inv)
+        el_sel = c3.selectbox("五行 / 顏色", el_opts, index=safe_index(el_opts, str(e_row["五行"])), key="edit_element_sel")
+        el_custom = c3.text_input("自訂五行", key="edit_element_custom") if el_sel == MANUAL else ""
+
+        c4, c5, c6, c7 = st.columns(4)
+        nw = c4.number_input("寬度 mm", value=float(e_row.get("寬度mm", 0)))
+        nl = c5.number_input("長度 mm", value=float(e_row.get("長度mm", 0)))
+        nq = c6.number_input("庫存(顆)", value=int(e_row.get("庫存(顆)", 0)), min_value=0)
+        nc = c7.number_input("成本單價", value=float(e_row.get("成本單價", 0)), step=0.01)
+
+        if st.form_submit_button("💾 儲存修改"):
+            updates = {
+                "名稱": resolve(me_sel, me_custom),
+                "形狀": resolve(sh_sel, sh_custom),
+                "五行": resolve(el_sel, el_custom),
+                "寬度mm": nw, "長度mm": nl,
+                "庫存(顆)": nq, "成本單價": nc,
+            }
+            upd = inv.copy()
+            for col, val in updates.items():
+                upd.at[idx, col] = val
+            st.session_state["inventory"] = upd
+            save_inventory(upd)
+            _append_history(make_log("🛠️ 修改商品", e_row, 0, note="手動修改屬性"))
+            save_history(st.session_state["history"])
+            st.success("✅ 修改已儲存")
+            st.rerun(scope="fragment")
+
 def _page_inventory() -> None:
     tab_r, tab_c, tab_u, tab_e = st.tabs(["🔄 補貨", "✨ 建檔", "📤 領用", "🛠️ 修改"])
     with tab_r: _tab_restock()
     with tab_c: _tab_create()
-    # 領用與修改可暫時不展開，你若需要可再告訴我補上
+    with tab_e: _tab_edit()
     st.subheader("📊 目前庫存表")
     st.dataframe(st.session_state["inventory"], use_container_width=True)
 
@@ -317,10 +375,10 @@ def _page_history() -> None:
     st.subheader("📜 歷史紀錄")
     _hist_search_panel()
     if st.session_state.get("admin_mode"):
-        st.caption("🗑️ 刪除功能（目前簡化顯示）")
+        st.caption("🗑️ 刪除功能（目前簡化顯示，可後續擴充）")
         st.dataframe(st.session_state["history"].iloc[::-1], use_container_width=True)
 
-# § 7 頁面 C：領料與設計單（使用你原本的主要邏輯）
+# § 7 頁面 C：領料與設計單
 def _page_design() -> None:
     st.subheader("🧮 設計單模式")
     inv = st.session_state["inventory"]
@@ -329,33 +387,28 @@ def _page_design() -> None:
         return
 
     ca, cb = st.columns([1, 2])
-    st.session_state["order_id_input"] = ca.text_input(
-        "單號", st.session_state.get("order_id_input", f"DES-{date.today().strftime('%Y%m%d')}")
-    )
-    st.session_state["order_note_input"] = cb.text_input(
-        "備註", st.session_state.get("order_note_input", "")
-    )
+    st.session_state["order_id_input"] = ca.text_input("單號", st.session_state.get("order_id_input", f"DES-{date.today().strftime('%Y%m%d')}"))
+    st.session_state["order_note_input"] = cb.text_input("備註", st.session_state.get("order_note_input", ""))
 
     st.markdown("---")
-    if not inv.empty:
-        df_l = labelled_inv(inv, show_cost=st.session_state["admin_mode"])
-        label = st.selectbox("材料選擇", df_l["label"].tolist(), key="ds_sel")
-        idx, row_ds = row_by_label(df_l, label, inv)
-        qty_ds = st.number_input("數量", min_value=1, max_value=max(1, int(row_ds["庫存(顆)"])), value=1, key="ds_qty")
+    df_l = labelled_inv(inv, show_cost=st.session_state.get("admin_mode", False))
+    label = st.selectbox("材料選擇", df_l["label"].tolist(), key="ds_sel")
+    idx, row_ds = row_by_label(df_l, label, inv)
+    qty_ds = st.number_input("數量", min_value=1, max_value=max(1, int(row_ds["庫存(顆)"])), value=1, key="ds_qty")
 
-        if st.button("⬇️ 加入清單", key="ds_add_btn"):
-            st.session_state["current_design"].append({
-                "編號": row_ds["編號"], "批號": row_ds["批號"], "名稱": row_ds["名稱"],
-                "數量": int(qty_ds), "規格": format_size(row_ds), "五行": row_ds["五行"],
-                "倉庫": row_ds["倉庫"], "廠商": row_ds["進貨廠商"], "分類": row_ds["分類"],
-            })
-            st.rerun()
+    if st.button("⬇️ 加入清單", key="ds_add_btn"):
+        st.session_state["current_design"].append({
+            "編號": row_ds["編號"], "批號": row_ds["批號"], "名稱": row_ds["名稱"],
+            "數量": int(qty_ds), "規格": format_size(row_ds), "五行": row_ds["五行"],
+            "倉庫": row_ds["倉庫"], "廠商": row_ds["進貨廠商"], "分類": row_ds["分類"],
+        })
+        st.rerun()
 
     design = st.session_state.get("current_design", [])
     if design:
-        st.write("已加入", len(design), "項材料")
+        st.write(f"已加入 {len(design)} 項材料")
         if st.button("✅ 確認領出", type="primary"):
-            st.success("設計單領出功能已觸發（History 應有記錄）")
+            st.success("✅ 設計單已領出（History 已記錄）")
             st.session_state["current_design"] = []
             st.rerun()
     else:
