@@ -133,12 +133,12 @@ with st.sidebar:
 if page == "📦 庫存與進貨":
     tab_r, tab_c, tab_u, tab_e = st.tabs(["🔄 補貨", "✨ 建檔", "📤 領用", "🛠️ 修改"])
     
-    with tab_r: # 🔄 補貨
+    with tab_r: # 補貨
         inv = st.session_state["inventory"]
         if not inv.empty:
             df_l = inv.copy()
             df_l["display"] = df_l.apply(lambda r: make_inventory_label(r, st.session_state["admin_mode"]), axis=1)
-            sel = st.selectbox("選擇商品", df_l["display"].tolist(), key="r_sel")
+            sel = st.selectbox("選擇補貨商品", df_l["display"].tolist(), key="r_sel")
             idx = df_l[df_l["display"] == sel].index[0]
             row = inv.loc[idx]
             with st.form("r_form"):
@@ -146,7 +146,7 @@ if page == "📦 庫存與進貨":
                 c1, c2, c3 = st.columns(3)
                 qty = c1.number_input("進貨數量", 1, value=1)
                 price = c2.number_input("本次進貨總價", 0.0)
-                mode = c3.radio("方式", ["➕ 合併", "📦 新批號"])
+                mode = c3.radio("補方式", ["➕ 合併", "📦 新批號"])
                 batch = st.text_input("批號", f"{date.today().strftime('%Y%m%d')}-A") if mode == "📦 新批號" else row["批號"]
                 if st.form_submit_button("確認進貨"):
                     unit_cost = round(price / qty, 2) if qty > 0 else 0
@@ -158,11 +158,11 @@ if page == "📦 庫存與進貨":
                         new_r.update({"批號": batch, "進貨數量(顆)": qty, "庫存(顆)": qty, "成本單價": unit_cost, "進貨日期": str(date.today())})
                         st.session_state["inventory"] = pd.concat([st.session_state["inventory"], pd.DataFrame([new_r])], ignore_index=True)
                     log = {"紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"), "單號": "IN", "動作": f"補貨({mode})", "倉庫": row["倉庫"], "批號": batch, "編號": row["編號"], "名稱": row["名稱"], "數量變動": qty, "成本備註": f"總價${price}"}
-                    st.session_state["history"] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
+                    st.session_state["history"] = pd.concat([st.session_state["history"], pd.DataFrame([log])], ignore_index=True)
                     save_inventory(st.session_state["inventory"]); save_history(st.session_state["history"])
                     st.rerun()
 
-    with tab_c: # ✨ 建檔
+    with tab_c: # 建檔
         inv = st.session_state["inventory"]
         with st.form("c_form"):
             c1, c2, c3 = st.columns(3)
@@ -190,7 +190,7 @@ if page == "📦 庫存與進貨":
                 st.session_state["inventory"] = pd.concat([st.session_state["inventory"], pd.DataFrame([new_item])], ignore_index=True)
                 save_inventory(st.session_state["inventory"]); st.rerun()
 
-    with tab_e: # 🛠️ 修改 (修正手動輸入顯示)
+    with tab_e: # 修改 (修正引號錯誤與即時顯示)
         inv = st.session_state["inventory"]
         if not inv.empty:
             df_l = inv.copy()
@@ -199,7 +199,6 @@ if page == "📦 庫存與進貨":
             eidx = df_l[df_l["display"] == esel].index[0]
             erow = inv.loc[eidx]
 
-            # 選單在表單外確保即時重新渲染
             c1, c2, c3 = st.columns(3)
             me_opts = get_options("名稱", ["水晶"], inv)
             me_sel = c1.selectbox("名稱選單", me_opts, index=me_opts.index(erow['名稱']) if erow['名稱'] in me_opts else 0, key="me_sel")
@@ -222,7 +221,7 @@ if page == "📦 庫存與進貨":
                 if st.form_submit_button("💾 儲存修改"):
                     st.session_state["inventory"].at[eidx, "名稱"] = me_final
                     st.session_state["inventory"].at[eidx, "形狀"] = sh_final
-                    st.session_state["inventory'].at[eidx, "五行"] = el_final
+                    st.session_state["inventory"].at[eidx, "五行"] = el_final
                     st.session_state["inventory"].at[eidx, "寬度mm"] = ew
                     st.session_state["inventory"].at[eidx, "長度mm"] = el
                     st.session_state["inventory"].at[eidx, "庫存(顆)"] = eq
@@ -233,7 +232,7 @@ if page == "📦 庫存與進貨":
     st.dataframe(st.session_state["inventory"], use_container_width=True)
 
 # ==========================================
-# § 6 紀錄查詢頁面
+# § 6 紀錄查詢
 # ==========================================
 elif page == "📜 紀錄查詢":
     st.subheader("📜 歷史紀錄")
@@ -242,7 +241,7 @@ elif page == "📜 紀錄查詢":
         st.dataframe(df_h.iloc[::-1], use_container_width=True)
 
 # ==========================================
-# § 7 領料與設計單頁面 (修復數量與小計顯示)
+# § 7 領料與設計單 (確認包含數量與小計)
 # ==========================================
 elif page == "🧮 領料與設計單":
     st.subheader("🧮 設計單模式")
@@ -278,7 +277,7 @@ elif page == "🧮 領料與設計單":
             total_p += item_total
             cc1, cc2 = st.columns([5, 1])
             
-            # 核心顯示邏輯：包含數量與小計
+            # 確保顯示格式包含數量與小計
             cost_info = f" (💰單價:${item['單價']:.2f} | 小計:${item_total:.2f})" if st.session_state["admin_mode"] else ""
             cc1.write(f"🔸 [{item['顏色']}] **{item['名稱']}** ({item['規格']}) x{item['數量']} | {item['批號']}{cost_info}")
             
