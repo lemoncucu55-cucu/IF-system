@@ -1,142 +1,137 @@
-from __future__ import annotations
-import uuid
-from datetime import date, datetime
+import streamlit as st
 import pandas as pd
 import gspread
-import streamlit as st
 from oauth2client.service_account import ServiceAccountCredentials
+from datetime import date, datetime
+import uuid
 import time
 
-# § 1 常數設定
+# --- 1. 核心設定 ---
 SHEET_ID = "1gf-pn034w0oZx8jWDUJvmIyHX_O7eHbiBb9diVSBX0Q"
 KEY_FILE = "google_key.json"
 COLUMNS = ['編號', '批號', '倉庫', '分類', '名稱', '寬度mm', '長度mm', '形狀', '五行', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '成本單價']
-HISTORY_COLUMNS = ['紀錄時間', '單號', '動作', '倉庫', '批號', '編號', '分類', '名稱', '規格', '廠商', '數量變動', '成本備註']
-MANUAL = "➕ 手動輸入"
 
-# § 2 核心連線
+# --- 2. 連線函式 ---
 @st.cache_resource
-def _gs_client():
+def get_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
         if "gcp_service_account" in st.secrets:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
         else:
             creds = ServiceAccountCredentials.from_json_keyfile_name(KEY_FILE, scope)
+        return gspread.authorize(creds)
     except:
-        st.error("Google 連線失敗"); st.stop()
-    return gspread.authorize(creds)
+        st.error("Google 授權失敗，請檢查 Secret 設定"); st.stop()
 
 def load_data(tab=None):
     try:
-        ws = _gs_client().open_by_key(SHEET_ID).worksheet(tab) if tab else _gs_client().open_by_key(SHEET_ID).sheet1
-        df = pd.DataFrame(ws.get_all_records())
-        if df.empty: return pd.DataFrame(columns=COLUMNS if not tab else HISTORY_COLUMNS)
-        return df
-    except: return pd.DataFrame(columns=COLUMNS if not tab else HISTORY_COLUMNS)
+        ws = get_client().open_by_key(SHEET_ID).worksheet(tab) if tab else get_client().open_by_key(SHEET_ID).sheet1
+        return pd.DataFrame(ws.get_all_records())
+    except:
+        return pd.DataFrame(columns=COLUMNS)
 
 def save_data(df, tab=None):
-    ws = _gs_client().open_by_key(SHEET_ID).worksheet(tab) if tab else _gs_client().open_by_key(SHEET_ID).sheet1
+    ws = get_client().open_by_key(SHEET_ID).worksheet(tab) if tab else get_client().open_by_key(SHEET_ID).sheet1
     ws.clear()
     ws.update(range_name="A1", values=[df.columns.tolist()] + df.astype(str).values.tolist())
 
-# § 3 工具
-def fmt_sz(r):
-    try: return f"{r.get('寬度mm', 0)}x{r.get('長度mm', 0)}mm" if float(r.get('長度mm', 0)) > 0 else f"{r.get('寬度mm', 0)}mm"
-    except: return "0mm"
-
-def mk_label(r, admin=False):
-    c = f" 💰${float(r.get('成本單價', 0)):.2f}" if admin else ""
-    return f"[{r.get('倉庫', '庫')}] ({r.get('五行', '無')}) {r.get('名稱', '無')} {fmt_sz(r)} 【{r.get('批號', '批')}】 | 存:{r.get('庫存(顆)', 0)}{c}"
-
-# § 4 初始化
+# --- 3. 初始化 ---
 st.set_page_config(page_title="IF Crystal 系統", layout="wide")
 if "inventory" not in st.session_state: st.session_state["inventory"] = load_data()
 if "current_design" not in st.session_state: st.session_state["current_design"] = []
+if "admin_mode" not in st.session_state: st.session_state["admin_mode"] = False
 
+# --- 4. 側邊欄 ---
 with st.sidebar:
-    st.session_state["admin_mode"] = (st.text_input("主管密碼", type="password") == "admin123")
-    page = st.radio("前往", ["📦 庫存管理", "📜 紀錄查詢", "🧮 設計領料"])
-    if st.button("🔄 重整系統"): st.session_state.clear(); st.rerun()
+    st.title("💎 管理後台")
+    pwd = st.text_input("主管密碼", type="password")
+    st.session_state["admin_mode"] = (pwd == "admin123")
+    page = st.radio("前往頁面", ["📦 庫存管理", "🧮 設計領料", "📜 歷史紀錄"])
+    if st.button("🔄 強制刷新系統"):
+        st.session_state.clear()
+        st.rerun()
 
-# --- 庫存管理 ---
-if page == "📦 庫存管理":
-    t1, t2, t3 = st.tabs(["🔄 補貨", "✨ 建檔", "🛠️ 修改"])
+# --- 5. 頁面邏輯：設計領料 (核心修正) ---
+if page == "🧮 設計領料":
+    st.header("🧮 設計單領料模式")
+    
+    # 單號與備註
+    c1, c2 = st.columns([1, 2])
+    oid = c1.text_input("設計單號", f"DES-{date.today().strftime('%m%d')}")
+    note = c2.text_input("領料備註 (客戶/用途)")
+
+    # 【重要】優先渲染已加入的清單，確保不會消失
+    if st.session_state["current_design"]:
+        st.subheader("🛒 目前待領清單")
+        total_cost = 0.0
+        # 建立一個容器來鎖定清單顯示
+        design_container = st.container(border=True)
+        with design_container:
+            for i, item in enumerate(st.session_state["current_design"]):
+                # 計算小計
+                sub = float(item.get("單價", 0)) * int(item.get("數量", 0))
+                total_cost += sub
+                
+                # 顯示單行
+                col_info, col_del = st.columns([6, 1])
+                admin_txt = f" (小計: ${sub:.2f})" if st.session_state["admin_mode"] else ""
+                col_info.markdown(f"🔸 **[{item.get('顏色', '無')}] {item.get('名稱', '無')}** | {item.get('規格', '0mm')} x **{item.get('數量', 0)}**{admin_txt}")
+                
+                if col_del.button("🗑️", key=f"del_{i}_{time.time()}"):
+                    st.session_state["current_design"].pop(i)
+                    st.rerun()
+        
+        # 總計與提交
+        st.write(f"### 總計品項: {len(st.session_state['current_design'])} 件")
+        if st.session_state["admin_mode"]:
+            st.write(f"💰 **預估總成本: ${total_cost:.2f}**")
+        
+        if st.button("🚀 確認領出 (扣除雲端庫存)", type="primary", use_container_width=True):
+            for it in st.session_state["current_design"]:
+                st.session_state["inventory"].at[it["idx"], "庫存(顆)"] -= it["數量"]
+            save_data(st.session_state["inventory"])
+            st.session_state["current_design"] = []
+            st.success("✅ 領料成功！庫存已扣除。")
+            time.sleep(1.5)
+            st.rerun()
+    else:
+        st.info("💡 目前清單是空的，請從下方選擇材料加入。")
+
+    st.divider()
+
+    # 材料選擇區 (放在下方)
+    st.subheader("🔍 選擇材料加入")
     inv = st.session_state["inventory"]
-    with t1:
-        if not inv.empty:
-            df_l = inv.copy(); df_l["dp"] = df_l.apply(lambda r: mk_label(r, st.session_state["admin_mode"]), axis=1)
-            sel = st.selectbox("選擇商品", df_l["dp"].tolist())
-            idx = df_l[df_l["dp"] == sel].index[0]
-            with st.form("r_f"):
-                qty = st.number_input("進貨數量", 1); pri = st.number_input("總價", 0.0)
-                if st.form_submit_button("確認補貨"):
-                    st.session_state["inventory"].at[idx, "庫存(顆)"] += qty
-                    st.session_state["inventory"].at[idx, "成本單價"] = round(pri/qty, 2) if qty > 0 else 0
-                    save_data(st.session_state["inventory"]); st.rerun()
-    with t2:
-        with st.form("c_f"):
-            c1, c2 = st.columns(2)
-            name = c1.text_input("品名")
-            elem = c2.text_input("五行/顏色")
-            if st.form_submit_button("建立商品"):
-                new_r = {"編號": f"ST{uuid.uuid4().hex[:5].upper()}", "批號": "初始", "倉庫": "Imeng", "名稱": name, "五行": elem, "庫存(顆)": 1, "成本單價": 0, "寬度mm": 0, "長度mm": 0, "分類": "天然石", "形狀": "圓珠", "進貨廠商": "自用", "進貨數量(顆)": 1, "進貨日期": str(date.today())}
-                st.session_state["inventory"] = pd.concat([inv, pd.DataFrame([new_r])], ignore_index=True)
-                save_data(st.session_state["inventory"]); st.rerun()
+    if not inv.empty:
+        # 建立易讀的標籤
+        inv["label"] = inv.apply(lambda r: f"[{r['倉庫']}] ({r['五行']}) {r['名稱']} {r['寬度mm']}mm | 存:{r['庫存(顆)']}", axis=1)
+        sel_label = st.selectbox("搜尋材料名稱/規格", inv["label"].tolist(), key="material_sel")
+        
+        target_idx = inv[inv["label"] == sel_label].index[0]
+        target_row = inv.loc[target_idx]
+        
+        col_q, col_btn = st.columns([1, 1])
+        pick_qty = col_q.number_input("輸入要領取的數量", 1, max_value=max(1, int(target_row["庫存(顆)"])), key="pick_qty")
+        
+        if col_btn.button("➕ 加入待領清單", use_container_width=True):
+            # 直接存入最簡單的欄位
+            st.session_state["current_design"].append({
+                "idx": target_idx,
+                "名稱": target_row["名稱"],
+                "顏色": target_row["五行"],
+                "規格": f"{target_row['寬度mm']}mm",
+                "數量": pick_qty,
+                "單價": target_row["成本單價"]
+            })
+            st.toast(f"已加入: {target_row['名稱']}")
+            st.rerun()
+
+# --- 6. 其他頁面 ---
+elif page == "📦 庫存管理":
+    st.header("📦 雲端庫存總覽")
     st.dataframe(st.session_state["inventory"], use_container_width=True)
 
-# --- 設計領料 (強制渲染修正版) ---
-elif page == "🧮 設計領料":
-    st.subheader("🧮 設計單領料")
-    ca, cb = st.columns([1, 2])
-    oid = ca.text_input("單號", f"DES-{date.today().strftime('%m%d')}")
-    note = cb.text_input("備註")
-    
-    inv = st.session_state["inventory"]
-    df_l = inv.copy(); df_l["dp"] = df_l.apply(lambda r: mk_label(r), axis=1)
-    sel = st.selectbox("選擇材料", df_l["dp"].tolist())
-    idx = df_l[df_l["dp"] == sel].index[0]; row = inv.loc[idx]
-    
-    qty = st.number_input("加入數量", 1, max_value=max(1, int(row["庫存(顆)"])))
-    if st.button("⬇️ 加入待領清單"):
-        st.session_state["current_design"].append({
-            "idx": idx, "名稱": row["名稱"], "五行": row["五行"], 
-            "數量": qty, "單價": float(row["成本單價"]), "規格": fmt_sz(row), "批號": row["批號"]
-        })
-        st.rerun()
-    
-    # 建立一個專門顯示清單的容器，確保 100% 渲染
-    if st.session_state["current_design"]:
-        st.write("---")
-        st.markdown("### 🛒 待領清單明細")
-        list_container = st.container()
-        with list_container:
-            total_p = 0
-            for i, item in enumerate(st.session_state["current_design"]):
-                # 相容性取值
-                iname = item.get("名稱", "未知")
-                ielem = item.get("五行", item.get("顏色", "無"))
-                iqty = item.get("數量", 1)
-                ipri = float(item.get("單價", 0))
-                isz = item.get("規格", "0mm")
-                
-                sub = ipri * iqty
-                total_p += sub
-                
-                c_text, c_del = st.columns([6, 1])
-                cost_info = f" (小計: ${sub:.2f})" if st.session_state["admin_mode"] else ""
-                c_text.markdown(f"🔸 [{ielem}] **{iname}** ({isz}) x{iqty}{cost_info}")
-                if c_del.button("🗑️", key=f"del_{i}"):
-                    st.session_state["current_design"].pop(i); st.rerun()
-            
-            st.divider()
-            if st.session_state["admin_mode"]: st.metric("預估總成本", f"${total_p:.2f}")
-            if st.button("✅ 確認領出 (扣庫存)", type="primary", use_container_width=True):
-                for it in st.session_state["current_design"]:
-                    st.session_state["inventory"].at[it["idx"], "庫存(顆)"] -= it["數量"]
-                save_data(st.session_state["inventory"])
-                st.session_state["current_design"] = []
-                st.success("領料成功！"); time.sleep(1); st.rerun()
-
-elif page == "📜 紀錄查詢":
+elif page == "📜 歷史紀錄":
+    st.header("📜 歷史紀錄查詢")
     st.dataframe(load_data("History").iloc[::-1], use_container_width=True)
