@@ -115,8 +115,6 @@ if "inventory" not in st.session_state: st.session_state["inventory"] = load_inv
 if "history" not in st.session_state: st.session_state["history"] = load_history()
 if "admin_mode" not in st.session_state: st.session_state["admin_mode"] = False
 if "current_design" not in st.session_state: st.session_state["current_design"] = []
-if "order_id_input" not in st.session_state: st.session_state["order_id_input"] = f"DES-{date.today().strftime('%Y%m%d')}"
-if "order_note_input" not in st.session_state: st.session_state["order_note_input"] = ""
 
 with st.sidebar:
     st.header("🔑 權限控制")
@@ -128,7 +126,7 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# § 5 功能頁面邏輯
+# § 5 庫存管理
 # ==========================================
 if page == "📦 庫存與進貨":
     tab_r, tab_c, tab_u, tab_e = st.tabs(["🔄 補貨", "✨ 建檔", "📤 領用", "🛠️ 修改"])
@@ -138,7 +136,7 @@ if page == "📦 庫存與進貨":
         if not inv.empty:
             df_l = inv.copy()
             df_l["display"] = df_l.apply(lambda r: make_inventory_label(r, st.session_state["admin_mode"]), axis=1)
-            sel = st.selectbox("選擇補貨商品", df_l["display"].tolist(), key="r_sel")
+            sel = st.selectbox("選擇商品", df_l["display"].tolist(), key="r_sel")
             idx = df_l[df_l["display"] == sel].index[0]
             row = inv.loc[idx]
             with st.form("r_form"):
@@ -200,7 +198,7 @@ if page == "📦 庫存與進貨":
             erow = inv.loc[eidx]
             
             c1, c2, c3 = st.columns(3)
-            me_opts = get_options("名稱", ["水晶"], inv)
+            me_opts = get_dynamic_options = get_options("名稱", ["水晶"], inv)
             me_sel = c1.selectbox("名稱選單", me_opts, index=me_opts.index(erow['名稱']) if erow['名稱'] in me_opts else 0, key="me_sel")
             me_final = st.text_input("新名稱", key="me_man") if me_sel == MANUAL else me_sel
 
@@ -219,22 +217,28 @@ if page == "📦 庫存與進貨":
                 eq = cc3.number_input("庫存", value=int(erow["庫存(顆)"]))
                 ep = cc4.number_input("成本單價", value=float(erow["成本單價"]), step=0.1)
                 if st.form_submit_button("💾 儲存修改"):
-                    st.session_state["inventory"].at[eidx, "名稱"] = me_final
-                    st.session_state["inventory"].at[eidx, "形狀"] = sh_final
-                    st.session_state["inventory"].at[eidx, "五行"] = el_final # 修正處
-                    st.session_state["inventory"].at[eidx, "寬度mm"] = ew
-                    st.session_state["inventory"].at[eidx, "長度mm"] = el
-                    st.session_state["inventory"].at[eidx, "庫存(顆)"] = eq
-                    st.session_state["inventory"].at[eidx, "成本單價"] = ep
-                    save_inventory(st.session_state["inventory"]); st.rerun()
+                    # 修正處：確保引號對稱
+                    inv_upd = st.session_state["inventory"].copy()
+                    inv_upd.at[eidx, "名稱"] = me_final
+                    inv_upd.at[eidx, "形狀"] = sh_final
+                    inv_upd.at[eidx, "五行"] = el_final
+                    inv_upd.at[eidx, "寬度mm"] = ew
+                    inv_upd.at[eidx, "長度mm"] = el
+                    inv_upd.at[eidx, "庫存(顆)"] = eq
+                    inv_upd.at[eidx, "成本單價"] = ep
+                    save_inventory(inv_upd)
+                    st.rerun()
 
     st.subheader("📊 目前庫存表")
     st.dataframe(st.session_state["inventory"], use_container_width=True)
 
-elif page == "🧮 領料與設計單": # 修復設計單 KeyError 問題
+# ==========================================
+# § 6 領料與設計單
+# ==========================================
+elif page == "🧮 領料與設計單":
     st.subheader("🧮 設計單模式")
     ca, cb = st.columns([1, 2])
-    oid = ca.text_input("單號", st.session_state["order_id_input"])
+    oid = ca.text_input("單號", f"DES-{date.today().strftime('%Y%m%d')}")
     note = cb.text_input("備註")
     
     inv = st.session_state["inventory"]
