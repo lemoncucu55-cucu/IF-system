@@ -115,6 +115,8 @@ if "inventory" not in st.session_state: st.session_state["inventory"] = load_inv
 if "history" not in st.session_state: st.session_state["history"] = load_history()
 if "admin_mode" not in st.session_state: st.session_state["admin_mode"] = False
 if "current_design" not in st.session_state: st.session_state["current_design"] = []
+if "order_id_input" not in st.session_state: st.session_state["order_id_input"] = f"DES-{date.today().strftime('%Y%m%d')}"
+if "order_note_input" not in st.session_state: st.session_state["order_note_input"] = ""
 
 with st.sidebar:
     st.header("🔑 權限控制")
@@ -126,7 +128,7 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# § 5 庫存與進貨
+# § 5 功能頁面邏輯
 # ==========================================
 if page == "📦 庫存與進貨":
     tab_r, tab_c, tab_u, tab_e = st.tabs(["🔄 補貨", "✨ 建檔", "📤 領用", "🛠️ 修改"])
@@ -136,7 +138,7 @@ if page == "📦 庫存與進貨":
         if not inv.empty:
             df_l = inv.copy()
             df_l["display"] = df_l.apply(lambda r: make_inventory_label(r, st.session_state["admin_mode"]), axis=1)
-            sel = st.selectbox("選擇商品", df_l["display"].tolist(), key="r_sel")
+            sel = st.selectbox("選擇補貨商品", df_l["display"].tolist(), key="r_sel")
             idx = df_l[df_l["display"] == sel].index[0]
             row = inv.loc[idx]
             with st.form("r_form"):
@@ -188,7 +190,7 @@ if page == "📦 庫存與進貨":
                 st.session_state["inventory"] = pd.concat([st.session_state["inventory"], pd.DataFrame([new_item])], ignore_index=True)
                 save_inventory(st.session_state["inventory"]); st.rerun()
 
-    with tab_e: # 修改
+    with tab_e: # 修改 (徹底修復引號報錯)
         inv = st.session_state["inventory"]
         if not inv.empty:
             df_l = inv.copy()
@@ -219,29 +221,20 @@ if page == "📦 庫存與進貨":
                 if st.form_submit_button("💾 儲存修改"):
                     st.session_state["inventory"].at[eidx, "名稱"] = me_final
                     st.session_state["inventory"].at[eidx, "形狀"] = sh_final
-                    st.session_state["inventory"].at[eidx, "五行"] = el_final
+                    st.session_state["inventory"].at[eidx, "五行"] = el_final # 修正處
                     st.session_state["inventory"].at[eidx, "寬度mm"] = ew
                     st.session_state["inventory"].at[eidx, "長度mm"] = el
-                    st.session_state['inventory'].at[eidx, "庫存(顆)"] = eq
+                    st.session_state["inventory"].at[eidx, "庫存(顆)"] = eq
                     st.session_state["inventory"].at[eidx, "成本單價"] = ep
                     save_inventory(st.session_state["inventory"]); st.rerun()
 
-# ==========================================
-# § 6 紀錄查詢
-# ==========================================
-elif page == "📜 紀錄查詢":
-    st.subheader("📜 歷史紀錄")
-    df_h = st.session_state["history"]
-    if not df_h.empty:
-        st.dataframe(df_h.iloc[::-1], use_container_width=True)
+    st.subheader("📊 目前庫存表")
+    st.dataframe(st.session_state["inventory"], use_container_width=True)
 
-# ==========================================
-# § 7 領料與設計單 (修正存檔 KeyError 問題)
-# ==========================================
-elif page == "🧮 領料與設計單":
+elif page == "🧮 領料與設計單": # 修復設計單 KeyError 問題
     st.subheader("🧮 設計單模式")
     ca, cb = st.columns([1, 2])
-    oid = ca.text_input("單號", f"DES-{date.today().strftime('%Y%m%d')}")
+    oid = ca.text_input("單號", st.session_state["order_id_input"])
     note = cb.text_input("備註")
     
     inv = st.session_state["inventory"]
@@ -254,16 +247,9 @@ elif page == "🧮 領料與設計單":
     qty = st.number_input("數量", 1, max_value=int(row["庫存(顆)"]), value=1)
     if st.button("⬇️ 加入清單"):
         st.session_state["current_design"].append({
-            "idx": ridx, 
-            "名稱": row["名稱"], 
-            "規格": format_size(row), 
-            "五行": row["五行"],  # 修正：名稱與 History 對應
-            "數量": qty, 
-            "單價": float(row["成本單價"]), 
-            "批號": row["批號"],
-            "倉庫": row["倉庫"],
-            "分類": row["分類"],
-            "廠商": row["進貨廠商"]
+            "idx": ridx, "名稱": row["名稱"], "規格": format_size(row), 
+            "五行": row["五行"], "數量": qty, "單價": float(row["成本單價"]), 
+            "批號": row["批號"], "倉庫": row["倉庫"], "分類": row["分類"], "廠商": row["進貨廠商"]
         })
         st.rerun()
 
@@ -277,36 +263,19 @@ elif page == "🧮 領料與設計單":
             cost_info = f" (💰單價:${item['單價']:.2f} | 小計:${item_total:.2f})" if st.session_state["admin_mode"] else ""
             cc1.write(f"🔸 [{item['五行']}] **{item['名稱']}** ({item['規格']}) x{item['數量']} | {item['批號']}{cost_info}")
             if cc2.button("🗑️", key=f"del_{i}"):
-                st.session_state["current_design"].pop(i)
-                st.rerun()
+                st.session_state["current_design"].pop(i); st.rerun()
         
-        if st.session_state["admin_mode"]: 
-            st.metric("預估總成本", f"${total_p:.2f}")
-        
-        if st.button("✅ 確認領出 (扣庫存)", type="primary", use_container_width=True):
+        if st.session_state["admin_mode"]: st.metric("預估總成本", f"${total_p:.2f}")
+        if st.button("✅ 確認領出 (扣庫存)", type="primary"):
             for item in st.session_state["current_design"]:
-                # 執行扣庫存
                 st.session_state["inventory"].at[item["idx"], "庫存(顆)"] -= item["數量"]
-                # 準備寫入紀錄
-                log = {
-                    "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                    "單號": oid, 
-                    "動作": "設計領料", 
-                    "倉庫": item["倉庫"], 
-                    "批號": item["批號"],
-                    "編號": st.session_state["inventory"].at[item["idx"], "編號"],
-                    "分類": item["分類"],
-                    "名稱": item["名稱"], 
-                    "規格": item["規格"],
-                    "廠商": item["廠商"],
-                    "數量變動": -item["數量"], 
-                    "成本備註": note
-                }
+                log = {"紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"), "單號": oid, "動作": "設計領料", "倉庫": item["倉庫"], "批號": item["批號"], "編號": st.session_state["inventory"].at[item["idx"], "編號"], "分類": item["分類"], "名稱": item["名稱"], "規格": item["規格"], "廠商": item["廠商"], "數量變動": -item["數量"], "成本備註": note}
                 st.session_state["history"] = pd.concat([st.session_state["history"], pd.DataFrame([log])], ignore_index=True)
-            
-            save_inventory(st.session_state["inventory"])
-            save_history(st.session_state["history"])
-            st.session_state["current_design"] = []
-            st.success("✅ 領料完成！")
-            time.sleep(1)
-            st.rerun()
+            save_inventory(st.session_state["inventory"]); save_history(st.session_state["history"])
+            st.session_state["current_design"] = []; st.success("✅ 領料完成！"); time.sleep(1); st.rerun()
+
+elif page == "📜 紀錄查詢":
+    st.subheader("📜 歷史紀錄")
+    df_h = st.session_state["history"]
+    if not df_h.empty:
+        st.dataframe(df_h.iloc[::-1], use_container_width=True)
