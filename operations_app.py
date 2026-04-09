@@ -55,7 +55,7 @@ def load_gs_data(tab_name=None):
         df.columns = df.columns.astype(str).str.strip().str.replace("\ufeff", "")
         return df
     except Exception as e:
-        return pd.DataFrame(columns=COLUMNS)
+        return pd.DataFrame(columns=COLUMNS if not tab_name else HISTORY_COLUMNS)
 
 def save_gs_data(df, tab_name=None):
     try:
@@ -142,7 +142,27 @@ if page == "📦 庫存管理":
                     new_cost = round(add_total_price / add_qty, 2) if add_qty > 0 else 0
                     st.session_state["inventory"].at[target_idx, "庫存(顆)"] += add_qty
                     st.session_state["inventory"].at[target_idx, "成本單價"] = new_cost
+                    
+                    # 紀錄歷史
+                    new_hist = load_gs_data("History")
+                    log_entry = {
+                        "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "單號": "IN",
+                        "動作": "補貨進貨",
+                        "倉庫": target_row["倉庫"],
+                        "批號": target_row["批號"],
+                        "編號": target_row["編號"],
+                        "分類": target_row["分類"],
+                        "名稱": target_row["名稱"],
+                        "規格": format_size(target_row),
+                        "廠商": target_row["進貨廠商"],
+                        "數量變動": add_qty,
+                        "成本備註": f"總價 ${add_total_price}"
+                    }
+                    new_hist = pd.concat([new_hist, pd.DataFrame([log_entry])], ignore_index=True)
+                    
                     save_gs_data(st.session_state["inventory"])
+                    save_gs_data(new_hist, "History")
                     st.success(f"✅ {target_row['名稱']} 補貨成功！")
                     st.rerun()
         else:
@@ -188,8 +208,28 @@ if page == "📦 庫存管理":
                     "庫存(顆)": new_qty,
                     "成本單價": new_cost
                 }
+                
+                # 紀錄歷史
+                new_hist = load_gs_data("History")
+                log_entry = {
+                    "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "單號": "NEW",
+                    "動作": "新品建檔",
+                    "倉庫": new_data["倉庫"],
+                    "批號": new_data["批號"],
+                    "編號": new_data["編號"],
+                    "分類": new_data["分類"],
+                    "名稱": new_data["名稱"],
+                    "規格": format_size(new_data),
+                    "廠商": new_data["進貨廠商"],
+                    "數量變動": new_data["庫存(顆)"],
+                    "成本備註": f"單價 ${new_cost}"
+                }
+                new_hist = pd.concat([new_hist, pd.DataFrame([log_entry])], ignore_index=True)
+                
                 st.session_state["inventory"] = pd.concat([inv, pd.DataFrame([new_data])], ignore_index=True)
                 save_gs_data(st.session_state["inventory"])
+                save_gs_data(new_hist, "History")
                 st.success(f"已成功建立：{final_name}")
                 st.rerun()
 
@@ -210,11 +250,31 @@ if page == "📦 庫存管理":
                 edit_cost = c2.number_input("修正成本單價", value=float(row_e["成本單價"]))
                 
                 if st.form_submit_button("💾 儲存所有修改"):
+                    # 紀錄修改歷史
+                    new_hist = load_gs_data("History")
+                    log_entry = {
+                        "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "單號": "EDIT",
+                        "動作": "資料修改",
+                        "倉庫": row_e["倉庫"],
+                        "批號": row_e["批號"],
+                        "編號": row_e["編號"],
+                        "分類": row_e["分類"],
+                        "名稱": edit_name,
+                        "規格": format_size(row_e),
+                        "廠商": row_e["進貨廠商"],
+                        "數量變動": edit_stock - row_e["庫存(顆)"],
+                        "成本備註": f"原庫存 {row_e['庫存(顆)']} -> {edit_stock}"
+                    }
+                    new_hist = pd.concat([new_hist, pd.DataFrame([log_entry])], ignore_index=True)
+                    
                     st.session_state["inventory"].at[idx_e, "名稱"] = edit_name
                     st.session_state["inventory"].at[idx_e, "五行"] = edit_elem
                     st.session_state["inventory"].at[idx_e, "庫存(顆)"] = edit_stock
                     st.session_state["inventory"].at[idx_e, "成本單價"] = edit_cost
+                    
                     save_gs_data(st.session_state["inventory"])
+                    save_gs_data(new_hist, "History")
                     st.success("修改已存檔！")
                     st.rerun()
 
@@ -261,14 +321,36 @@ elif page == "🧮 設計領料":
             else:
                 st.write(f"### 預估總額: ${total_p:.2f}")
 
-            if st.button("🚀 確認領出 (同步扣除雲端庫存)", type="primary", use_container_width=True):
-                # 執行扣庫存邏輯
+            if st.button("🚀 確認領出 (同步扣除雲端庫存並紀錄歷史)", type="primary", use_container_width=True):
+                # 執行扣庫存與紀錄歷史
+                new_hist = load_gs_data("History")
+                
                 for it in st.session_state["current_design"]:
-                    st.session_state["inventory"].at[it["idx"], "庫存(顆)"] -= it["數量"]
+                    idx = it["idx"]
+                    orig_row = st.session_state["inventory"].loc[idx]
+                    st.session_state["inventory"].at[idx, "庫存(顆)"] -= it["數量"]
+                    
+                    # 建立歷史紀錄
+                    log_entry = {
+                        "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "單號": order_id,
+                        "動作": "設計領料",
+                        "倉庫": orig_row["倉庫"],
+                        "批號": it["批號"],
+                        "編號": orig_row["編號"],
+                        "分類": orig_row["分類"],
+                        "名稱": it["名稱"],
+                        "規格": it["規格"],
+                        "廠商": orig_row["進貨廠商"],
+                        "數量變動": -it["數量"],
+                        "成本備註": order_note
+                    }
+                    new_hist = pd.concat([new_hist, pd.DataFrame([log_entry])], ignore_index=True)
                 
                 save_gs_data(st.session_state["inventory"])
+                save_gs_data(new_hist, "History")
                 st.session_state["current_design"] = []
-                st.success("✅ 領料完成！庫存已同步更新。")
+                st.success("✅ 領料完成！庫存與歷史紀錄已更新。")
                 time.sleep(1.5)
                 st.rerun()
     else:
@@ -307,7 +389,7 @@ elif page == "🧮 設計領料":
 # ==========================================
 # § 7 歷史紀錄頁面
 # ==========================================
-elif page == "📜 歷史紀錄":
+elif page == "📜 紀錄查詢":
     st.header("📜 歷史出入庫紀錄")
     hist_df = load_gs_data("History")
     if not hist_df.empty:
