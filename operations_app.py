@@ -46,15 +46,32 @@ def load_gs_data(tab_name=None):
     try:
         client = get_gs_client()
         wb = client.open_by_key(SHEET_ID)
-        ws = wb.worksheet(tab_name) if tab_name else wb.sheet1
+        
+        # 檢查分頁是否存在
+        try:
+            ws = wb.worksheet(tab_name) if tab_name else wb.sheet1
+        except gspread.exceptions.WorksheetNotFound:
+            if tab_name == "History":
+                st.error(f"⚠️ 找不到名為「{tab_name}」的分頁！請在 Google Sheets 中新增一個名為「History」的工作表，並在第一列填入標題：{', '.join(HISTORY_COLUMNS)}")
+            return pd.DataFrame(columns=COLUMNS if not tab_name else HISTORY_COLUMNS)
+            
         data = ws.get_all_records()
         if not data:
             return pd.DataFrame(columns=COLUMNS if not tab_name else HISTORY_COLUMNS)
+        
         df = pd.DataFrame(data)
-        # 清洗欄位名稱，移除空格
+        # 清洗欄位名稱，移除空格與 BOM 字符
         df.columns = df.columns.astype(str).str.strip().str.replace("\ufeff", "")
-        return df
+        
+        # 確保所有必要欄位都存在
+        target_cols = HISTORY_COLUMNS if tab_name == "History" else COLUMNS
+        for col in target_cols:
+            if col not in df.columns:
+                df[col] = ""
+                
+        return df[target_cols].copy()
     except Exception as e:
+        st.warning(f"💡 讀取 {tab_name if tab_name else '主表'} 時發生非預期狀況: {e}")
         return pd.DataFrame(columns=COLUMNS if not tab_name else HISTORY_COLUMNS)
 
 def save_gs_data(df, tab_name=None):
@@ -62,13 +79,18 @@ def save_gs_data(df, tab_name=None):
         client = get_gs_client()
         wb = client.open_by_key(SHEET_ID)
         ws = wb.worksheet(tab_name) if tab_name else wb.sheet1
+        
+        # 準備寫入數據
+        # 轉換所有數據為字串以確保相容性，並處理 NaN
+        df_to_save = df.fillna("").astype(str)
+        values = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
+        
         ws.clear()
-        # 寫入標題與內容
-        values = [df.columns.tolist()] + df.astype(str).values.tolist()
-        ws.update(range_name="A1", values=values)
-        st.toast(f"✅ 雲端資料同步完成 ({tab_name if tab_name else '主表'})")
+        ws.update(values, 'A1') # 使用最新版 gspread 推薦的語法
+        
+        st.toast(f"✅ 雲端資料同步成功 ({tab_name if tab_name else '庫存表'})")
     except Exception as e:
-        st.error(f"❌ 存檔失敗：{e}")
+        st.error(f"❌ 雲端同步失敗：{e}")
 
 # ==========================================
 # § 3 業務邏輯工具
@@ -77,7 +99,8 @@ def format_size(row):
     try:
         w = float(row.get('寬度mm', 0))
         l = float(row.get('長度mm', 0))
-        return f"{w}x{l}mm" if l > 0 else f"{w}mm"
+        if l > 0: return f"{w}x{l}mm"
+        return f"{w}mm"
     except:
         return "0mm"
 
@@ -283,7 +306,7 @@ if page == "📦 庫存管理":
     st.dataframe(st.session_state["inventory"], use_container_width=True)
 
 # ==========================================
-# § 6 設計領料頁面 (核心修復：數量與小計)
+# § 6 設計領料頁面
 # ==========================================
 elif page == "🧮 設計領料":
     st.header("🧮 設計單領料模式")
@@ -293,7 +316,7 @@ elif page == "🧮 設計領料":
     order_id = col_info1.text_input("設計單號", f"DES-{date.today().strftime('%m%d')}")
     order_note = col_info2.text_input("備註 (用途/客戶)")
 
-    # 顯示待領清單 (鎖定容器)
+    # 顯示待領清單
     if st.session_state["current_design"]:
         st.subheader("🛒 待領清單明細")
         total_p = 0.0
@@ -305,9 +328,8 @@ elif page == "🧮 設計領料":
                 total_p += subtotal
                 
                 c_text, c_del = st.columns([6, 1])
-                # 顯示明細：[五行] 名稱 (規格) (形狀) x 數量 | 批號 (小計)
+                # 顯示明細
                 cost_text = f" (💰單價:${item['單價']:.2f} | 小計:${subtotal:.2f})" if st.session_state["admin_mode"] else f" (小計: ${subtotal:.2f})"
-                
                 shape_text = f" ({item.get('形狀', '')})" if item.get('形狀') else ""
                 c_text.markdown(f"🔸 **[{item['五行']}] {item['名稱']}** ({item['規格']}){shape_text} x **{item['數量']}** | 批號:{item['批號']}{cost_text}")
                 
@@ -393,6 +415,7 @@ elif page == "📜 紀錄查詢":
     st.header("📜 歷史出入庫紀錄")
     hist_df = load_gs_data("History")
     if not hist_df.empty:
+        # 反轉順序顯示最新纪录
         st.dataframe(hist_df.iloc[::-1], use_container_width=True)
     else:
         st.info("目前尚無歷史紀錄。")
