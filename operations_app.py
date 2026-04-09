@@ -86,7 +86,8 @@ def create_item_label(row, is_admin=False):
     stock = int(float(row.get('庫存(顆)', 0)))
     elem = f"({row.get('五行', '-')}) " if row.get('五行') else ""
     cost = f" 💰${float(row.get('成本單價', 0)):.2f}" if is_admin else ""
-    return f"[{row.get('倉庫','-')}] {elem}{row.get('名稱','-')} {sz} 【{row.get('批號','-')}】 | 存:{stock}{cost}"
+    shape = f" ({row.get('形狀', '')})" if row.get('形狀') else ""
+    return f"[{row.get('倉庫','-')}] {elem}{row.get('名稱','-')} {sz}{shape} 【{row.get('批號','-')}】 | 存:{stock}{cost}"
 
 def get_unique_options(col, defaults, df):
     existing = {str(v).strip() for v in df[col].unique() if str(v).strip() and str(v).lower() not in ("nan", "0")}
@@ -244,10 +245,11 @@ elif page == "🧮 設計領料":
                 total_p += subtotal
                 
                 c_text, c_del = st.columns([6, 1])
-                # 顯示明細：[五行] 名稱 (規格) x 數量 | 批號 (小計)
+                # 顯示明細：[五行] 名稱 (規格) (形狀) x 數量 | 批號 (小計)
                 cost_text = f" (💰單價:${item['單價']:.2f} | 小計:${subtotal:.2f})" if st.session_state["admin_mode"] else f" (小計: ${subtotal:.2f})"
                 
-                c_text.markdown(f"🔸 **[{item['五行']}] {item['名稱']}** ({item['規格']}) x **{item['數量']}** | 批號:{item['批號']}{cost_text}")
+                shape_text = f" ({item.get('形狀', '')})" if item.get('形狀') else ""
+                c_text.markdown(f"🔸 **[{item['五行']}] {item['名稱']}** ({item['規格']}){shape_text} x **{item['數量']}** | 批號:{item['批號']}{cost_text}")
                 
                 if c_del.button("🗑️", key=f"del_design_{i}"):
                     st.session_state["current_design"].pop(i)
@@ -293,6 +295,7 @@ elif page == "🧮 設計領料":
                 "idx": target_idx_d,
                 "名稱": target_row_d["名稱"],
                 "五行": target_row_d["五行"],
+                "形狀": target_row_d["形狀"],
                 "規格": format_size(target_row_d),
                 "數量": pick_q,
                 "單價": target_row_d["成本單價"],
