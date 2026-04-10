@@ -12,7 +12,6 @@ import time
 SHEET_ID = "1gf-pn034w0oZx8jWDUJvmIyHX_O7eHbiBb9diVSBX0Q"
 KEY_FILE = "google_key.json"
 
-# 標準欄位定義
 COLUMNS = [
     '編號', '批號', '倉庫', '分類', '名稱', '寬度mm', '長度mm', '形狀', '五行',
     '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '成本單價'
@@ -26,13 +25,12 @@ HISTORY_COLUMNS = [
 MANUAL = "➕ 手動輸入"
 
 # ==========================================
-# § 2 雲端試算表連線功能
+# § 2 雲端試算表連線功能 (模組化拆分，確保不互相干擾)
 # ==========================================
 @st.cache_resource
 def get_gs_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        # 優先讀取 Streamlit Secrets (GCP Service Account)
         if "gcp_service_account" in st.secrets:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
         else:
@@ -42,55 +40,74 @@ def get_gs_client():
         st.error(f"❌ Google 授權失敗：{e}")
         st.stop()
 
-def load_gs_data(tab_name=None):
+# --- 庫存專用讀寫 ---
+def load_inventory_from_gs():
+    try:
+        client = get_gs_client()
+        ws = client.open_by_key(SHEET_ID).sheet1
+        data = ws.get_all_records()
+        if not data:
+            return pd.DataFrame(columns=COLUMNS)
+        df = pd.DataFrame(data)
+        df.columns = df.columns.astype(str).str.strip().str.replace("\ufeff", "")
+        for col in COLUMNS:
+            if col not in df.columns: df[col] = ""
+        return df[COLUMNS].copy()
+    except Exception as e:
+        st.error(f"讀取庫存失敗: {e}")
+        return pd.DataFrame(columns=COLUMNS)
+
+def save_inventory_to_gs(df):
+    try:
+        client = get_gs_client()
+        ws = client.open_by_key(SHEET_ID).sheet1
+        df_to_save = df.fillna("").astype(str)
+        values = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
+        ws.clear()
+        ws.update(range_name='A1', values=values)
+    except Exception as e:
+        st.error(f"儲存庫存失敗: {e}")
+
+# --- 歷史紀錄專用讀寫 (全面改用安全的新增行 Append 模式) ---
+def load_history_from_gs():
     try:
         client = get_gs_client()
         wb = client.open_by_key(SHEET_ID)
-        
-        # 檢查分頁是否存在
         try:
-            ws = wb.worksheet(tab_name) if tab_name else wb.sheet1
+            ws = wb.worksheet("History")
         except gspread.exceptions.WorksheetNotFound:
-            if tab_name == "History":
-                st.error(f"⚠️ 找不到名為「{tab_name}」的分頁！請在 Google Sheets 中新增一個名為「History」的工作表，並在第一列填入標題：{', '.join(HISTORY_COLUMNS)}")
-            return pd.DataFrame(columns=COLUMNS if not tab_name else HISTORY_COLUMNS)
+            return pd.DataFrame(columns=HISTORY_COLUMNS)
             
         data = ws.get_all_records()
         if not data:
-            return pd.DataFrame(columns=COLUMNS if not tab_name else HISTORY_COLUMNS)
-        
+            return pd.DataFrame(columns=HISTORY_COLUMNS)
+            
         df = pd.DataFrame(data)
-        # 清洗欄位名稱，移除空格與 BOM 字符
         df.columns = df.columns.astype(str).str.strip().str.replace("\ufeff", "")
-        
-        # 確保所有必要欄位都存在
-        target_cols = HISTORY_COLUMNS if tab_name == "History" else COLUMNS
-        for col in target_cols:
-            if col not in df.columns:
-                df[col] = ""
-                
-        return df[target_cols].copy()
+        for col in HISTORY_COLUMNS:
+            if col not in df.columns: df[col] = ""
+        return df[HISTORY_COLUMNS].copy()
     except Exception as e:
-        st.warning(f"💡 讀取 {tab_name if tab_name else '主表'} 時發生非預期狀況: {e}")
-        return pd.DataFrame(columns=COLUMNS if not tab_name else HISTORY_COLUMNS)
+        st.error(f"讀取歷史紀錄失敗: {e}")
+        return pd.DataFrame(columns=HISTORY_COLUMNS)
 
-def save_gs_data(df, tab_name=None):
+def append_history_batch(log_entries):
+    """最安全的方法：直接在 Google Sheets 底部新增資料，絕不覆寫或清空舊資料"""
+    if not log_entries: return
     try:
         client = get_gs_client()
         wb = client.open_by_key(SHEET_ID)
-        ws = wb.worksheet(tab_name) if tab_name else wb.sheet1
+        try:
+            ws = wb.worksheet("History")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = wb.add_worksheet(title="History", rows="1000", cols="20")
+            ws.append_row(HISTORY_COLUMNS)
         
-        # 準備寫入數據
-        # 轉換所有數據為字串以確保相容性，並處理 NaN
-        df_to_save = df.fillna("").astype(str)
-        values = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
-        
-        ws.clear()
-        ws.update(values, 'A1') # 使用最新版 gspread 推薦的語法
-        
-        st.toast(f"✅ 雲端資料同步成功 ({tab_name if tab_name else '庫存表'})")
+        # 轉換成列表格式並直接附加
+        rows = [[str(entry.get(col, "")) for col in HISTORY_COLUMNS] for entry in log_entries]
+        ws.append_rows(rows)
     except Exception as e:
-        st.error(f"❌ 雲端同步失敗：{e}")
+        st.error(f"❌ 寫入歷史紀錄失敗: {e}")
 
 # ==========================================
 # § 3 業務邏輯工具
@@ -99,8 +116,7 @@ def format_size(row):
     try:
         w = float(row.get('寬度mm', 0))
         l = float(row.get('長度mm', 0))
-        if l > 0: return f"{w}x{l}mm"
-        return f"{w}mm"
+        return f"{w}x{l}mm" if l > 0 else f"{w}mm"
     except:
         return "0mm"
 
@@ -122,20 +138,18 @@ def get_unique_options(col, defaults, df):
 st.set_page_config(page_title="IF Crystal 系統", layout="wide")
 
 if "inventory" not in st.session_state:
-    st.session_state["inventory"] = load_gs_data()
+    st.session_state["inventory"] = load_inventory_from_gs()
 if "current_design" not in st.session_state:
     st.session_state["current_design"] = []
 
-# 側邊欄控制
 with st.sidebar:
     st.title("💎 管理控制台")
     pwd = st.text_input("主管模式密碼", type="password")
     st.session_state["admin_mode"] = (pwd == "admin123")
-    
     page = st.radio("功能導覽", ["📦 庫存管理", "🧮 設計領料", "📜 歷史紀錄"])
     
     if st.button("🔄 強制刷新雲端資料"):
-        st.session_state["inventory"] = load_gs_data()
+        st.session_state["inventory"] = load_inventory_from_gs()
         st.rerun()
 
 # ==========================================
@@ -166,8 +180,7 @@ if page == "📦 庫存管理":
                     st.session_state["inventory"].at[target_idx, "庫存(顆)"] += add_qty
                     st.session_state["inventory"].at[target_idx, "成本單價"] = new_cost
                     
-                    # 紀錄歷史
-                    new_hist = load_gs_data("History")
+                    # 使用新的 Append 方法紀錄歷史
                     log_entry = {
                         "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "單號": "IN",
@@ -182,14 +195,10 @@ if page == "📦 庫存管理":
                         "數量變動": add_qty,
                         "成本備註": f"總價 ${add_total_price}"
                     }
-                    new_hist = pd.concat([new_hist, pd.DataFrame([log_entry])], ignore_index=True)
-                    
-                    save_gs_data(st.session_state["inventory"])
-                    save_gs_data(new_hist, "History")
+                    append_history_batch([log_entry])
+                    save_inventory_to_gs(st.session_state["inventory"])
                     st.success(f"✅ {target_row['名稱']} 補貨成功！")
                     st.rerun()
-        else:
-            st.warning("目前庫存為空，請先建檔。")
 
     # --- T2: 建檔 ---
     with t2:
@@ -200,20 +209,26 @@ if page == "📦 庫存管理":
             
             n_opts = get_unique_options("名稱", ["水晶"], inv)
             n_sel = c2.selectbox("名稱 (選單)", n_opts)
-            n_man = c2.text_input("手動輸入名稱 (選購手動時填寫)")
+            n_man = c2.text_input("手動輸入名稱")
             
             el_opts = get_unique_options("五行", ["金", "木", "水", "火", "土"], inv)
             el_sel = c3.selectbox("五行/顏色 (選單)", el_opts)
             el_man = c3.text_input("手動輸入五行")
-            
+
             c4, c5, c6 = st.columns(3)
-            new_qty = c4.number_input("初始數量", min_value=1, value=1)
-            new_cost = c5.number_input("單顆成本", min_value=0.0)
-            new_wh_mm = c6.number_input("寬度 mm", min_value=0.0)
+            sh_opts = get_unique_options("形狀", ["圓珠", "切角", "鑽切", "圓筒", "方體", "長柱", "不規則", "造型", "原礦"], inv)
+            sh_sel = c4.selectbox("形狀 (選單)", sh_opts)
+            sh_man = c4.text_input("手動輸入形狀")
+            
+            c7, c8, c9 = st.columns(3)
+            new_qty = c7.number_input("初始數量", min_value=1, value=1)
+            new_cost = c8.number_input("單顆成本", min_value=0.0)
+            new_wh_mm = c9.number_input("寬度 mm", min_value=0.0)
             
             if st.form_submit_button("✅ 提交建檔"):
                 final_name = n_man if n_sel == MANUAL else n_sel
                 final_elem = el_man if el_sel == MANUAL else el_sel
+                final_shape = sh_man if sh_sel == MANUAL else sh_sel
                 
                 new_data = {
                     "編號": f"ST{uuid.uuid4().hex[:6].upper()}",
@@ -221,7 +236,7 @@ if page == "📦 庫存管理":
                     "倉庫": new_wh,
                     "分類": "天然石",
                     "名稱": final_name,
-                    "形狀": "圓珠",
+                    "形狀": final_shape,
                     "五行": final_elem,
                     "寬度mm": new_wh_mm,
                     "長度mm": 0,
@@ -232,8 +247,6 @@ if page == "📦 庫存管理":
                     "成本單價": new_cost
                 }
                 
-                # 紀錄歷史
-                new_hist = load_gs_data("History")
                 log_entry = {
                     "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "單號": "NEW",
@@ -248,11 +261,9 @@ if page == "📦 庫存管理":
                     "數量變動": new_data["庫存(顆)"],
                     "成本備註": f"單價 ${new_cost}"
                 }
-                new_hist = pd.concat([new_hist, pd.DataFrame([log_entry])], ignore_index=True)
-                
+                append_history_batch([log_entry])
                 st.session_state["inventory"] = pd.concat([inv, pd.DataFrame([new_data])], ignore_index=True)
-                save_gs_data(st.session_state["inventory"])
-                save_gs_data(new_hist, "History")
+                save_inventory_to_gs(st.session_state["inventory"])
                 st.success(f"已成功建立：{final_name}")
                 st.rerun()
 
@@ -266,15 +277,16 @@ if page == "📦 庫存管理":
             row_e = inv.loc[idx_e]
             
             with st.form("edit_form_final"):
+                ca, cb, cc = st.columns(3)
+                edit_name = ca.text_input("修改名稱", row_e["名稱"])
+                edit_elem = cb.text_input("修改五行", row_e.get("五行", ""))
+                edit_shape = cc.text_input("修改形狀", row_e.get("形狀", ""))
+                
                 c1, c2 = st.columns(2)
-                edit_name = c1.text_input("修改名稱", row_e["名稱"])
-                edit_elem = c2.text_input("修改五行", row_e["五行"])
                 edit_stock = c1.number_input("修正庫存數量", value=int(row_e["庫存(顆)"]))
                 edit_cost = c2.number_input("修正成本單價", value=float(row_e["成本單價"]))
                 
                 if st.form_submit_button("💾 儲存所有修改"):
-                    # 紀錄修改歷史
-                    new_hist = load_gs_data("History")
                     log_entry = {
                         "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "單號": "EDIT",
@@ -289,15 +301,15 @@ if page == "📦 庫存管理":
                         "數量變動": edit_stock - row_e["庫存(顆)"],
                         "成本備註": f"原庫存 {row_e['庫存(顆)']} -> {edit_stock}"
                     }
-                    new_hist = pd.concat([new_hist, pd.DataFrame([log_entry])], ignore_index=True)
+                    append_history_batch([log_entry])
                     
                     st.session_state["inventory"].at[idx_e, "名稱"] = edit_name
                     st.session_state["inventory"].at[idx_e, "五行"] = edit_elem
+                    st.session_state["inventory"].at[idx_e, "形狀"] = edit_shape
                     st.session_state["inventory"].at[idx_e, "庫存(顆)"] = edit_stock
                     st.session_state["inventory"].at[idx_e, "成本單價"] = edit_cost
                     
-                    save_gs_data(st.session_state["inventory"])
-                    save_gs_data(new_hist, "History")
+                    save_inventory_to_gs(st.session_state["inventory"])
                     st.success("修改已存檔！")
                     st.rerun()
 
@@ -311,89 +323,74 @@ if page == "📦 庫存管理":
 elif page == "🧮 設計領料":
     st.header("🧮 設計單領料模式")
     
-    # 設計單資訊
     col_info1, col_info2 = st.columns([1, 2])
     order_id = col_info1.text_input("設計單號", f"DES-{date.today().strftime('%m%d')}")
     order_note = col_info2.text_input("備註 (用途/客戶)")
 
-    # 顯示待領清單
     if st.session_state["current_design"]:
         st.subheader("🛒 待領清單明細")
         total_p = 0.0
-        
         with st.container(border=True):
             for i, item in enumerate(st.session_state["current_design"]):
-                # 計算單項小計
                 subtotal = float(item["單價"]) * int(item["數量"])
                 total_p += subtotal
-                
                 c_text, c_del = st.columns([6, 1])
-                # 顯示明細
                 cost_text = f" (💰單價:${item['單價']:.2f} | 小計:${subtotal:.2f})" if st.session_state["admin_mode"] else f" (小計: ${subtotal:.2f})"
                 shape_text = f" ({item.get('形狀', '')})" if item.get('形狀') else ""
                 c_text.markdown(f"🔸 **[{item['五行']}] {item['名稱']}** ({item['規格']}){shape_text} x **{item['數量']}** | 批號:{item['批號']}{cost_text}")
-                
                 if c_del.button("🗑️", key=f"del_design_{i}"):
                     st.session_state["current_design"].pop(i)
                     st.rerun()
-            
             st.divider()
             if st.session_state["admin_mode"]:
                 st.metric("預估總成本", f"${total_p:.2f}")
             else:
                 st.write(f"### 預估總額: ${total_p:.2f}")
 
-            if st.button("🚀 確認領出 (同步扣除雲端庫存並紀錄歷史)", type="primary", use_container_width=True):
-                # 執行扣庫存與紀錄歷史
-                new_hist = load_gs_data("History")
-                
+            if st.button("🚀 確認領出 (同步扣除庫存並直接紀錄)", type="primary", use_container_width=True):
+                # 準備批次寫入的歷史紀錄
+                log_entries = []
                 for it in st.session_state["current_design"]:
                     idx = it["idx"]
                     orig_row = st.session_state["inventory"].loc[idx]
                     st.session_state["inventory"].at[idx, "庫存(顆)"] -= it["數量"]
                     
-                    # 建立歷史紀錄
-                    log_entry = {
+                    log_entries.append({
                         "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "單號": order_id,
                         "動作": "設計領料",
-                        "倉庫": orig_row["倉庫"],
-                        "批號": it["批號"],
-                        "編號": orig_row["編號"],
-                        "分類": orig_row["分類"],
-                        "名稱": it["名稱"],
-                        "規格": it["規格"],
-                        "廠商": orig_row["進貨廠商"],
+                        "倉庫": orig_row.get("倉庫", ""),
+                        "批號": it.get("批號", ""),
+                        "編號": orig_row.get("編號", ""),
+                        "分類": orig_row.get("分類", ""),
+                        "名稱": it.get("名稱", ""),
+                        "規格": it.get("規格", ""),
+                        "廠商": orig_row.get("進貨廠商", ""),
                         "數量變動": -it["數量"],
                         "成本備註": order_note
-                    }
-                    new_hist = pd.concat([new_hist, pd.DataFrame([log_entry])], ignore_index=True)
+                    })
                 
-                save_gs_data(st.session_state["inventory"])
-                save_gs_data(new_hist, "History")
+                # 批次寫入歷史 & 儲存庫存
+                append_history_batch(log_entries)
+                save_inventory_to_gs(st.session_state["inventory"])
+                
                 st.session_state["current_design"] = []
-                st.success("✅ 領料完成！庫存與歷史紀錄已更新。")
+                st.success("✅ 領料完成！")
                 time.sleep(1.5)
                 st.rerun()
     else:
         st.info("💡 目前待領清單是空的，請從下方選擇材料加入。")
 
     st.divider()
-
-    # 材料選擇區
     st.subheader("🔍 選擇材料加入")
     inv_d = st.session_state["inventory"]
     if not inv_d.empty:
-        # 建立搜尋標籤
         inv_d["dp"] = inv_d.apply(lambda r: create_item_label(r, False), axis=1)
         sel_d = st.selectbox("搜尋庫存品名/批號", inv_d["dp"].tolist(), key="design_search")
-        
         target_idx_d = inv_d[inv_d["dp"] == sel_d].index[0]
         target_row_d = inv_d.loc[target_idx_d]
-        
         col_qty, col_btn = st.columns([1, 1])
         pick_q = col_qty.number_input("加入數量", 1, max_value=max(1, int(target_row_d["庫存(顆)"])), key="pick_qty_box")
-        
         if col_btn.button("➕ 加入清單", use_container_width=True):
             st.session_state["current_design"].append({
                 "idx": target_idx_d,
@@ -413,9 +410,8 @@ elif page == "🧮 設計領料":
 # ==========================================
 elif page == "📜 紀錄查詢":
     st.header("📜 歷史出入庫紀錄")
-    hist_df = load_gs_data("History")
+    hist_df = load_history_from_gs()
     if not hist_df.empty:
-        # 反轉順序顯示最新纪录
         st.dataframe(hist_df.iloc[::-1], use_container_width=True)
     else:
         st.info("目前尚無歷史紀錄。")
