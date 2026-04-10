@@ -75,13 +75,11 @@ def load_history_from_gs():
         try:
             ws = wb.worksheet("History")
         except gspread.exceptions.WorksheetNotFound:
-            # 如果找不到分頁，回傳一個明確標記錯誤的 DataFrame
             error_df = pd.DataFrame([{"紀錄時間": "錯誤", "動作": "找不到 History 分頁"}])
             return error_df
             
         values = ws.get_all_values()
         if not values or len(values) < 2: 
-            # 如果沒資料，回傳一個標記為空的 DataFrame
             empty_df = pd.DataFrame([{"紀錄時間": "系統提示", "動作": "History 分頁內目前沒有資料列"}])
             return empty_df
 
@@ -96,7 +94,6 @@ def load_history_from_gs():
         mask = df.astype(str).apply(lambda x: x.str.strip() != "").any(axis=1)
         df = df[mask]
 
-        # 暴力確保至少回傳某些東西
         if df.empty:
             return pd.DataFrame([{"紀錄時間": "系統提示", "動作": "過濾後沒有有效資料"}])
 
@@ -119,14 +116,12 @@ def save_inventory_to_gs(df):
 def append_history_batch(log_entries):
     if not log_entries: return
     try:
-        # 直接拿純資料，不要用 load_history_from_gs() 以免陷入無窮迴圈或格式錯誤
         client = get_gs_client()
         wb = client.open_by_key(SHEET_ID)
         try:
             ws = wb.worksheet("History")
             existing_values = ws.get_all_values()
             
-            # 處理標題
             if existing_values:
                 headers = [str(h).strip().replace("\ufeff", "") for h in existing_values[0]]
                 if len(existing_values) > 1:
@@ -140,17 +135,14 @@ def append_history_batch(log_entries):
             ws = wb.add_worksheet(title="History", rows="1000", cols="20")
             df_hist = pd.DataFrame(columns=HISTORY_COLUMNS)
         
-        # 合併新紀錄
         new_df = pd.DataFrame(log_entries)
         df_hist = pd.concat([df_hist, new_df], ignore_index=True)
         
-        # 補齊必要欄位
         for col in HISTORY_COLUMNS:
             if col not in df_hist.columns:
                 df_hist[col] = ""
         df_hist = df_hist[HISTORY_COLUMNS]
         
-        # 寫回
         df_to_save = df_hist.fillna("").astype(str)
         values = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
         ws.clear()
@@ -227,8 +219,11 @@ if page == "📦 庫存管理":
                 
                 if st.form_submit_button("確認補貨"):
                     new_cost = round(add_total_price / add_qty, 2) if add_qty > 0 else 0
-                    st.session_state["inventory"].at[target_idx, "庫存(顆)"] = int(float(st.session_state["inventory"].at[target_idx, "庫存(顆)"])) + add_qty
-                    st.session_state["inventory"].at[target_idx, "成本單價"] = new_cost
+                    
+                    # 避免 TypeError: 將計算後的數字轉回字串存入 Pandas
+                    new_stock = int(float(st.session_state["inventory"].loc[target_idx, "庫存(顆)"])) + add_qty
+                    st.session_state["inventory"].loc[target_idx, "庫存(顆)"] = str(new_stock)
+                    st.session_state["inventory"].loc[target_idx, "成本單價"] = str(new_cost)
                     
                     log_entry = {
                         "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -281,18 +276,18 @@ if page == "📦 庫存管理":
                 new_data = {
                     "編號": f"ST{uuid.uuid4().hex[:6].upper()}",
                     "批號": "初始存貨",
-                    "倉庫": new_wh,
+                    "倉庫": str(new_wh),
                     "分類": "天然石",
-                    "名稱": final_name,
-                    "形狀": final_shape,
-                    "五行": final_elem,
-                    "寬度mm": new_wh_mm,
-                    "長度mm": 0,
-                    "進貨數量(顆)": new_qty,
+                    "名稱": str(final_name),
+                    "形狀": str(final_shape),
+                    "五行": str(final_elem),
+                    "寬度mm": str(new_wh_mm),
+                    "長度mm": "0",
+                    "進貨數量(顆)": str(new_qty),
                     "進貨日期": str(date.today()),
                     "進貨廠商": "自用",
-                    "庫存(顆)": new_qty,
-                    "成本單價": new_cost
+                    "庫存(顆)": str(new_qty),
+                    "成本單價": str(new_cost)
                 }
                 
                 log_entry = {
@@ -350,11 +345,12 @@ if page == "📦 庫存管理":
                     }
                     append_history_batch([log_entry])
                     
-                    st.session_state["inventory"].at[idx_e, "名稱"] = edit_name
-                    st.session_state["inventory"].at[idx_e, "五行"] = edit_elem
-                    st.session_state["inventory"].at[idx_e, "形狀"] = edit_shape
-                    st.session_state["inventory"].at[idx_e, "庫存(顆)"] = edit_stock
-                    st.session_state["inventory"].at[idx_e, "成本單價"] = edit_cost
+                    # 避免 TypeError: 將資料轉回文字
+                    st.session_state["inventory"].loc[idx_e, "名稱"] = str(edit_name)
+                    st.session_state["inventory"].loc[idx_e, "五行"] = str(edit_elem)
+                    st.session_state["inventory"].loc[idx_e, "形狀"] = str(edit_shape)
+                    st.session_state["inventory"].loc[idx_e, "庫存(顆)"] = str(edit_stock)
+                    st.session_state["inventory"].loc[idx_e, "成本單價"] = str(edit_cost)
                     
                     save_inventory_to_gs(st.session_state["inventory"])
                     st.success("修改已存檔！")
@@ -399,7 +395,10 @@ elif page == "🧮 設計領料":
                 for it in st.session_state["current_design"]:
                     idx = it["idx"]
                     orig_row = st.session_state["inventory"].loc[idx]
-                    st.session_state["inventory"].at[idx, "庫存(顆)"] = int(float(st.session_state["inventory"].at[idx, "庫存(顆)"])) - it["數量"]
+                    
+                    # 避免 TypeError: 強制轉文字寫入 (.loc 取代 .at 以增加穩定性)
+                    new_stock = int(float(st.session_state["inventory"].loc[idx, "庫存(顆)"])) - int(it["數量"])
+                    st.session_state["inventory"].loc[idx, "庫存(顆)"] = str(new_stock)
                     
                     log_entries.append({
                         "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
