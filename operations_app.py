@@ -57,8 +57,6 @@ def load_inventory_from_gs():
             else: final_headers.append(h)
 
         df = pd.DataFrame(values[1:], columns=final_headers)
-        
-        # 過濾掉整列都是空白的無效列
         mask = df.astype(str).apply(lambda x: x.str.strip() != "").any(axis=1)
         df = df[mask]
         
@@ -77,11 +75,15 @@ def load_history_from_gs():
         try:
             ws = wb.worksheet("History")
         except gspread.exceptions.WorksheetNotFound:
-            return pd.DataFrame(columns=HISTORY_COLUMNS)
+            # 如果找不到分頁，回傳一個明確標記錯誤的 DataFrame
+            error_df = pd.DataFrame([{"紀錄時間": "錯誤", "動作": "找不到 History 分頁"}])
+            return error_df
             
         values = ws.get_all_values()
         if not values or len(values) < 2: 
-            return pd.DataFrame(columns=HISTORY_COLUMNS)
+            # 如果沒資料，回傳一個標記為空的 DataFrame
+            empty_df = pd.DataFrame([{"紀錄時間": "系統提示", "動作": "History 分頁內目前沒有資料列"}])
+            return empty_df
 
         headers = [str(h).strip().replace("\ufeff", "") for h in values[0]]
         final_headers = []
@@ -91,18 +93,17 @@ def load_history_from_gs():
             else: final_headers.append(h)
 
         df = pd.DataFrame(values[1:], columns=final_headers)
-        
-        # 過濾掉整列都是空白的無效列
         mask = df.astype(str).apply(lambda x: x.str.strip() != "").any(axis=1)
         df = df[mask]
 
-        for col in HISTORY_COLUMNS:
-            if col not in df.columns: 
-                df[col] = ""
-        return df[HISTORY_COLUMNS].copy()
+        # 暴力確保至少回傳某些東西
+        if df.empty:
+            return pd.DataFrame([{"紀錄時間": "系統提示", "動作": "過濾後沒有有效資料"}])
+
+        return df
     except Exception as e:
-        st.error(f"讀取歷史紀錄發生異常: {e}")
-        return pd.DataFrame(columns=HISTORY_COLUMNS)
+        error_df = pd.DataFrame([{"紀錄時間": "嚴重異常", "動作": str(e)}])
+        return error_df
 
 def save_inventory_to_gs(df):
     try:
@@ -116,34 +117,44 @@ def save_inventory_to_gs(df):
         st.error(f"儲存庫存失敗: {e}")
 
 def append_history_batch(log_entries):
-    """改用與庫存相同的「全覆蓋寫入法」，徹底消滅 Append 幽靈空行問題"""
     if not log_entries: return
     try:
-        # 1. 抓取現在所有歷史紀錄 (已經過濾掉空行)
-        df_hist = load_history_from_gs()
+        # 直接拿純資料，不要用 load_history_from_gs() 以免陷入無窮迴圈或格式錯誤
+        client = get_gs_client()
+        wb = client.open_by_key(SHEET_ID)
+        try:
+            ws = wb.worksheet("History")
+            existing_values = ws.get_all_values()
+            
+            # 處理標題
+            if existing_values:
+                headers = [str(h).strip().replace("\ufeff", "") for h in existing_values[0]]
+                if len(existing_values) > 1:
+                    df_hist = pd.DataFrame(existing_values[1:], columns=headers)
+                else:
+                    df_hist = pd.DataFrame(columns=headers)
+            else:
+                df_hist = pd.DataFrame(columns=HISTORY_COLUMNS)
+                
+        except gspread.exceptions.WorksheetNotFound:
+            ws = wb.add_worksheet(title="History", rows="1000", cols="20")
+            df_hist = pd.DataFrame(columns=HISTORY_COLUMNS)
         
-        # 2. 轉為 DataFrame 並合併
+        # 合併新紀錄
         new_df = pd.DataFrame(log_entries)
         df_hist = pd.concat([df_hist, new_df], ignore_index=True)
         
-        # 3. 確保欄位正確
+        # 補齊必要欄位
         for col in HISTORY_COLUMNS:
             if col not in df_hist.columns:
                 df_hist[col] = ""
         df_hist = df_hist[HISTORY_COLUMNS]
         
-        # 4. 寫回 Google Sheets
-        client = get_gs_client()
-        wb = client.open_by_key(SHEET_ID)
-        try:
-            ws = wb.worksheet("History")
-        except gspread.exceptions.WorksheetNotFound:
-            ws = wb.add_worksheet(title="History", rows="1000", cols="20")
-            
+        # 寫回
         df_to_save = df_hist.fillna("").astype(str)
         values = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
-        ws.clear() # 徹底清空，不管以前在第幾行
-        ws.update(range_name='A1', values=values) # 從 A1 重新寫入
+        ws.clear()
+        ws.update(range_name='A1', values=values)
         
     except Exception as e:
         st.error(f"❌ 寫入歷史紀錄失敗: {e}")
@@ -440,13 +451,28 @@ elif page == "🧮 設計領料":
             st.rerun()
 
 # ==========================================
-# § 7 歷史紀錄頁面
+# § 7 歷史紀錄頁面 (終極顯示版)
 # ==========================================
 elif page == "📜 紀錄查詢":
     st.header("📜 歷史出入庫紀錄")
+    
+    st.info("正在嘗試暴力抓取雲端資料...")
     hist_df = load_history_from_gs()
     
-    if not hist_df.empty:
-        st.dataframe(hist_df.iloc[::-1], use_container_width=True)
+    st.write("---")
+    st.subheader("抓取結果：")
+    
+    # 絕對會把 hist_df 印出來，就算它長得很奇怪
+    st.dataframe(hist_df, use_container_width=True)
+    
+    st.write("---")
+    if not hist_df.empty and "紀錄時間" in hist_df.columns:
+        try:
+            # 如果資料正常，試著反轉順序顯示
+            st.success("✅ 成功讀取並顯示最新紀錄！")
+            st.dataframe(hist_df.iloc[::-1], use_container_width=True)
+        except Exception as e:
+            st.warning(f"⚠️ 反轉排序時發生錯誤: {e}，請看上方的原始資料表。")
     else:
-        st.info("目前尚無歷史紀錄。")
+        st.error("❌ 系統仍然判定這個表格是『空的』或者『格式異常』。")
+        st.warning("👉 請檢查上方印出來的表格，看它到底長什麼樣子。")
