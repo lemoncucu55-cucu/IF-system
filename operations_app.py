@@ -25,7 +25,7 @@ HISTORY_COLUMNS = [
 MANUAL = "➕ 手動輸入"
 
 # ==========================================
-# § 2 雲端試算表連線功能 (模組化拆分，確保不互相干擾)
+# § 2 雲端試算表連線功能 (改用暴力讀取 get_all_values)
 # ==========================================
 @st.cache_resource
 def get_gs_client():
@@ -40,22 +40,54 @@ def get_gs_client():
         st.error(f"❌ Google 授權失敗：{e}")
         st.stop()
 
-# --- 庫存專用讀寫 ---
 def load_inventory_from_gs():
     try:
         client = get_gs_client()
         ws = client.open_by_key(SHEET_ID).sheet1
-        data = ws.get_all_records()
-        if not data:
+        
+        # 暴力讀取法：直接抓取所有儲存格的原始文字
+        values = ws.get_all_values()
+        if not values or len(values) < 2:
             return pd.DataFrame(columns=COLUMNS)
-        df = pd.DataFrame(data)
-        df.columns = df.columns.astype(str).str.strip().str.replace("\ufeff", "")
+            
+        # 第一列強制作為標題，並清除所有隱藏空白
+        headers = [str(h).strip().replace("\ufeff", "") for h in values[0]]
+        df = pd.DataFrame(values[1:], columns=headers)
+        
+        # 確保必要的欄位存在
         for col in COLUMNS:
-            if col not in df.columns: df[col] = ""
+            if col not in df.columns: 
+                df[col] = ""
         return df[COLUMNS].copy()
     except Exception as e:
         st.error(f"讀取庫存失敗: {e}")
         return pd.DataFrame(columns=COLUMNS)
+
+def load_history_from_gs():
+    try:
+        client = get_gs_client()
+        wb = client.open_by_key(SHEET_ID)
+        try:
+            ws = wb.worksheet("History")
+        except gspread.exceptions.WorksheetNotFound:
+            return pd.DataFrame(columns=HISTORY_COLUMNS)
+            
+        # 暴力讀取法：無視格式錯誤
+        values = ws.get_all_values()
+        if not values or len(values) < 2: # 只有標題或全空
+            return pd.DataFrame(columns=HISTORY_COLUMNS)
+            
+        headers = [str(h).strip().replace("\ufeff", "") for h in values[0]]
+        df = pd.DataFrame(values[1:], columns=headers)
+        
+        # 確保必要的欄位存在
+        for col in HISTORY_COLUMNS:
+            if col not in df.columns: 
+                df[col] = ""
+        return df[HISTORY_COLUMNS].copy()
+    except Exception as e:
+        st.error(f"讀取歷史紀錄失敗: {e}")
+        return pd.DataFrame(columns=HISTORY_COLUMNS)
 
 def save_inventory_to_gs(df):
     try:
@@ -68,31 +100,7 @@ def save_inventory_to_gs(df):
     except Exception as e:
         st.error(f"儲存庫存失敗: {e}")
 
-# --- 歷史紀錄專用讀寫 (全面改用安全的新增行 Append 模式) ---
-def load_history_from_gs():
-    try:
-        client = get_gs_client()
-        wb = client.open_by_key(SHEET_ID)
-        try:
-            ws = wb.worksheet("History")
-        except gspread.exceptions.WorksheetNotFound:
-            return pd.DataFrame(columns=HISTORY_COLUMNS)
-            
-        data = ws.get_all_records()
-        if not data:
-            return pd.DataFrame(columns=HISTORY_COLUMNS)
-            
-        df = pd.DataFrame(data)
-        df.columns = df.columns.astype(str).str.strip().str.replace("\ufeff", "")
-        for col in HISTORY_COLUMNS:
-            if col not in df.columns: df[col] = ""
-        return df[HISTORY_COLUMNS].copy()
-    except Exception as e:
-        st.error(f"讀取歷史紀錄失敗: {e}")
-        return pd.DataFrame(columns=HISTORY_COLUMNS)
-
 def append_history_batch(log_entries):
-    """最安全的方法：直接在 Google Sheets 底部新增資料，絕不覆寫或清空舊資料"""
     if not log_entries: return
     try:
         client = get_gs_client()
@@ -103,7 +111,6 @@ def append_history_batch(log_entries):
             ws = wb.add_worksheet(title="History", rows="1000", cols="20")
             ws.append_row(HISTORY_COLUMNS)
         
-        # 轉換成列表格式並直接附加
         rows = [[str(entry.get(col, "")) for col in HISTORY_COLUMNS] for entry in log_entries]
         ws.append_rows(rows)
     except Exception as e:
@@ -149,6 +156,7 @@ with st.sidebar:
     page = st.radio("功能導覽", ["📦 庫存管理", "🧮 設計領料", "📜 歷史紀錄"])
     
     if st.button("🔄 強制刷新雲端資料"):
+        get_gs_client.clear() # 清除連線快取
         st.session_state["inventory"] = load_inventory_from_gs()
         st.rerun()
 
@@ -177,10 +185,9 @@ if page == "📦 庫存管理":
                 
                 if st.form_submit_button("確認補貨"):
                     new_cost = round(add_total_price / add_qty, 2) if add_qty > 0 else 0
-                    st.session_state["inventory"].at[target_idx, "庫存(顆)"] += add_qty
+                    st.session_state["inventory"].at[target_idx, "庫存(顆)"] = int(float(st.session_state["inventory"].at[target_idx, "庫存(顆)"])) + add_qty
                     st.session_state["inventory"].at[target_idx, "成本單價"] = new_cost
                     
-                    # 使用新的 Append 方法紀錄歷史
                     log_entry = {
                         "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "單號": "IN",
@@ -283,8 +290,8 @@ if page == "📦 庫存管理":
                 edit_shape = cc.text_input("修改形狀", row_e.get("形狀", ""))
                 
                 c1, c2 = st.columns(2)
-                edit_stock = c1.number_input("修正庫存數量", value=int(row_e["庫存(顆)"]))
-                edit_cost = c2.number_input("修正成本單價", value=float(row_e["成本單價"]))
+                edit_stock = c1.number_input("修正庫存數量", value=int(float(row_e["庫存(顆)"])))
+                edit_cost = c2.number_input("修正成本單價", value=float(row_e.get("成本單價", 0)))
                 
                 if st.form_submit_button("💾 儲存所有修改"):
                     log_entry = {
@@ -298,7 +305,7 @@ if page == "📦 庫存管理":
                         "名稱": edit_name,
                         "規格": format_size(row_e),
                         "廠商": row_e["進貨廠商"],
-                        "數量變動": edit_stock - row_e["庫存(顆)"],
+                        "數量變動": edit_stock - int(float(row_e["庫存(顆)"])),
                         "成本備註": f"原庫存 {row_e['庫存(顆)']} -> {edit_stock}"
                     }
                     append_history_batch([log_entry])
@@ -348,12 +355,11 @@ elif page == "🧮 設計領料":
                 st.write(f"### 預估總額: ${total_p:.2f}")
 
             if st.button("🚀 確認領出 (同步扣除庫存並直接紀錄)", type="primary", use_container_width=True):
-                # 準備批次寫入的歷史紀錄
                 log_entries = []
                 for it in st.session_state["current_design"]:
                     idx = it["idx"]
                     orig_row = st.session_state["inventory"].loc[idx]
-                    st.session_state["inventory"].at[idx, "庫存(顆)"] -= it["數量"]
+                    st.session_state["inventory"].at[idx, "庫存(顆)"] = int(float(st.session_state["inventory"].at[idx, "庫存(顆)"])) - it["數量"]
                     
                     log_entries.append({
                         "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -370,7 +376,6 @@ elif page == "🧮 設計領料":
                         "成本備註": order_note
                     })
                 
-                # 批次寫入歷史 & 儲存庫存
                 append_history_batch(log_entries)
                 save_inventory_to_gs(st.session_state["inventory"])
                 
@@ -390,17 +395,17 @@ elif page == "🧮 設計領料":
         target_idx_d = inv_d[inv_d["dp"] == sel_d].index[0]
         target_row_d = inv_d.loc[target_idx_d]
         col_qty, col_btn = st.columns([1, 1])
-        pick_q = col_qty.number_input("加入數量", 1, max_value=max(1, int(target_row_d["庫存(顆)"])), key="pick_qty_box")
+        pick_q = col_qty.number_input("加入數量", 1, max_value=max(1, int(float(target_row_d.get("庫存(顆)", 1)))), key="pick_qty_box")
         if col_btn.button("➕ 加入清單", use_container_width=True):
             st.session_state["current_design"].append({
                 "idx": target_idx_d,
                 "名稱": target_row_d["名稱"],
-                "五行": target_row_d["五行"],
-                "形狀": target_row_d["形狀"],
+                "五行": target_row_d.get("五行", ""),
+                "形狀": target_row_d.get("形狀", ""),
                 "規格": format_size(target_row_d),
                 "數量": pick_q,
-                "單價": target_row_d["成本單價"],
-                "批號": target_row_d["批號"]
+                "單價": float(target_row_d.get("成本單價", 0)),
+                "批號": target_row_d.get("批號", "")
             })
             st.toast(f"已加入: {target_row_d['名稱']}")
             st.rerun()
@@ -414,4 +419,4 @@ elif page == "📜 紀錄查詢":
     if not hist_df.empty:
         st.dataframe(hist_df.iloc[::-1], use_container_width=True)
     else:
-        st.info("目前尚無歷史紀錄。")
+        st.info("目前尚無歷史紀錄。 (可能是表單空白或正在讀取中)")
