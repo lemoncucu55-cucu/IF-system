@@ -453,26 +453,23 @@ elif page == "🧮 設計領料":
 # ==========================================
 # § 7 歷史紀錄頁面 (終極顯示版)
 # ==========================================
-elif page == "📜 紀錄查詢":
+elif page == "📜 歷史紀錄":
     st.header("📜 歷史出入庫紀錄")
     
-    st.info("正在嘗試暴力抓取雲端資料...")
+    st.info("正在嘗試抓取雲端資料...")
     hist_df = load_history_from_gs()
     
     st.write("---")
-    st.subheader("抓取結果：")
     
-    # 絕對會把 hist_df 印出來，就算它長得很奇怪
-    st.dataframe(hist_df, use_container_width=True)
-    
-    st.write("---")
     if not hist_df.empty and "紀錄時間" in hist_df.columns:
         try:
             # 如果資料正常，試著反轉順序顯示
             st.success("✅ 成功讀取並顯示最新紀錄！")
             st.dataframe(hist_df.iloc[::-1], use_container_width=True)
         except Exception as e:
-            st.warning(f"⚠️ 反轉排序時發生錯誤: {e}，請看上方的原始資料表。")
+            st.warning(f"⚠️ 反轉排序時發生錯誤: {e}，請看下方的原始資料表。")
+            st.dataframe(hist_df, use_container_width=True)
     else:
         st.error("❌ 系統仍然判定這個表格是『空的』或者『格式異常』。")
         st.warning("👉 請檢查上方印出來的表格，看它到底長什麼樣子。")
+        st.dataframe(hist_df, use_container_width=True)
