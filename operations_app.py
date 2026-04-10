@@ -25,7 +25,7 @@ HISTORY_COLUMNS = [
 MANUAL = "➕ 手動輸入"
 
 # ==========================================
-# § 2 雲端試算表連線功能 (改用暴力讀取 get_all_values)
+# § 2 雲端試算表連線功能
 # ==========================================
 @st.cache_resource
 def get_gs_client():
@@ -45,16 +45,17 @@ def load_inventory_from_gs():
         client = get_gs_client()
         ws = client.open_by_key(SHEET_ID).sheet1
         
-        # 暴力讀取法：直接抓取所有儲存格的原始文字
         values = ws.get_all_values()
         if not values or len(values) < 2:
             return pd.DataFrame(columns=COLUMNS)
             
-        # 第一列強制作為標題，並清除所有隱藏空白
         headers = [str(h).strip().replace("\ufeff", "") for h in values[0]]
         df = pd.DataFrame(values[1:], columns=headers)
         
-        # 確保必要的欄位存在
+        # 過濾掉整列都是空白的無效列
+        mask = df.astype(str).apply(lambda x: x.str.strip() != "").any(axis=1)
+        df = df[mask]
+        
         for col in COLUMNS:
             if col not in df.columns: 
                 df[col] = ""
@@ -70,24 +71,32 @@ def load_history_from_gs():
         try:
             ws = wb.worksheet("History")
         except gspread.exceptions.WorksheetNotFound:
-            return pd.DataFrame(columns=HISTORY_COLUMNS)
+            return pd.DataFrame() # 回傳空表
             
-        # 暴力讀取法：無視格式錯誤
         values = ws.get_all_values()
-        if not values or len(values) < 2: # 只有標題或全空
-            return pd.DataFrame(columns=HISTORY_COLUMNS)
-            
+        if not values or len(values) < 2: 
+            return pd.DataFrame()
+
+        # 【核心修正】：不管標題叫什麼，全部抓下來顯示，不再嚴格過濾
         headers = [str(h).strip().replace("\ufeff", "") for h in values[0]]
-        df = pd.DataFrame(values[1:], columns=headers)
         
-        # 確保必要的欄位存在
-        for col in HISTORY_COLUMNS:
-            if col not in df.columns: 
-                df[col] = ""
-        return df[HISTORY_COLUMNS].copy()
+        # 處理重複或空白的標題，避免 Pandas 報錯
+        final_headers = []
+        for i, h in enumerate(headers):
+            if not h: final_headers.append(f"未命名欄位_{i}")
+            elif h in final_headers: final_headers.append(f"{h}_{i}")
+            else: final_headers.append(h)
+
+        df = pd.DataFrame(values[1:], columns=final_headers)
+        
+        # 過濾掉整列都是空白的無效列
+        mask = df.astype(str).apply(lambda x: x.str.strip() != "").any(axis=1)
+        df = df[mask]
+
+        return df
     except Exception as e:
-        st.error(f"讀取歷史紀錄失敗: {e}")
-        return pd.DataFrame(columns=HISTORY_COLUMNS)
+        st.error(f"讀取歷史紀錄發生異常: {e}")
+        return pd.DataFrame()
 
 def save_inventory_to_gs(df):
     try:
@@ -156,7 +165,7 @@ with st.sidebar:
     page = st.radio("功能導覽", ["📦 庫存管理", "🧮 設計領料", "📜 歷史紀錄"])
     
     if st.button("🔄 強制刷新雲端資料"):
-        get_gs_client.clear() # 清除連線快取
+        get_gs_client.clear() 
         st.session_state["inventory"] = load_inventory_from_gs()
         st.rerun()
 
@@ -168,7 +177,6 @@ if page == "📦 庫存管理":
     t1, t2, t3 = st.tabs(["🔄 補貨進貨", "✨ 新品建檔", "🛠️ 資料修改"])
     inv = st.session_state["inventory"]
 
-    # --- T1: 補貨 ---
     with t1:
         if not inv.empty:
             df_label = inv.copy()
@@ -207,7 +215,6 @@ if page == "📦 庫存管理":
                     st.success(f"✅ {target_row['名稱']} 補貨成功！")
                     st.rerun()
 
-    # --- T2: 建檔 ---
     with t2:
         with st.form("create_form"):
             st.write("✨ **建立全新庫存品項**")
@@ -274,7 +281,6 @@ if page == "📦 庫存管理":
                 st.success(f"已成功建立：{final_name}")
                 st.rerun()
 
-    # --- T3: 修改 ---
     with t3:
         if not inv.empty:
             df_label_e = inv.copy()
@@ -411,12 +417,35 @@ elif page == "🧮 設計領料":
             st.rerun()
 
 # ==========================================
-# § 7 歷史紀錄頁面
+# § 7 歷史紀錄頁面 (加入深度診斷功能)
 # ==========================================
 elif page == "📜 紀錄查詢":
     st.header("📜 歷史出入庫紀錄")
     hist_df = load_history_from_gs()
+    
     if not hist_df.empty:
         st.dataframe(hist_df.iloc[::-1], use_container_width=True)
     else:
-        st.info("目前尚無歷史紀錄。 (可能是表單空白或正在讀取中)")
+        st.warning("⚠️ 系統目前讀取到的紀錄筆數為 0。")
+        st.info("💡 **啟動深度診斷模式...**")
+        try:
+            client = get_gs_client()
+            wb = client.open_by_key(SHEET_ID)
+            sheet_names = [s.title for s in wb.worksheets()]
+            st.write(f"1️⃣ **目前試算表包含的分頁有**： {', '.join(sheet_names)}")
+            
+            if "History" in sheet_names:
+                ws = wb.worksheet("History")
+                val = ws.get_all_values()
+                st.write(f"2️⃣ **History 分頁總共有**： {len(val)} 列資料 (包含標題列)")
+                if len(val) > 0:
+                    st.write("3️⃣ **第一列 (標題) 內容**：", val[0])
+                if len(val) > 1:
+                    st.write("4️⃣ **第二列 (首筆資料) 內容**：", val[1])
+                
+                if len(val) >= 2:
+                    st.error("❌ 系統偵測到有資料，但因為某些欄位格式被過濾掉了。以上面顯示的資料為主。")
+            else:
+                st.error("❌ **嚴重錯誤：找不到名為 `History` 的分頁！** 請確認分頁名稱是否拼錯 (例如多了空白鍵)。")
+        except Exception as e:
+            st.error(f"診斷過程失敗: {e}")
