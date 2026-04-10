@@ -50,7 +50,13 @@ def load_inventory_from_gs():
             return pd.DataFrame(columns=COLUMNS)
             
         headers = [str(h).strip().replace("\ufeff", "") for h in values[0]]
-        df = pd.DataFrame(values[1:], columns=headers)
+        final_headers = []
+        for i, h in enumerate(headers):
+            if not h: final_headers.append(f"未命名_{i}")
+            elif h in final_headers: final_headers.append(f"{h}_{i}")
+            else: final_headers.append(h)
+
+        df = pd.DataFrame(values[1:], columns=final_headers)
         
         # 過濾掉整列都是空白的無效列
         mask = df.astype(str).apply(lambda x: x.str.strip() != "").any(axis=1)
@@ -71,19 +77,16 @@ def load_history_from_gs():
         try:
             ws = wb.worksheet("History")
         except gspread.exceptions.WorksheetNotFound:
-            return pd.DataFrame() # 回傳空表
+            return pd.DataFrame(columns=HISTORY_COLUMNS)
             
         values = ws.get_all_values()
         if not values or len(values) < 2: 
-            return pd.DataFrame()
+            return pd.DataFrame(columns=HISTORY_COLUMNS)
 
-        # 【核心修正】：不管標題叫什麼，全部抓下來顯示，不再嚴格過濾
         headers = [str(h).strip().replace("\ufeff", "") for h in values[0]]
-        
-        # 處理重複或空白的標題，避免 Pandas 報錯
         final_headers = []
         for i, h in enumerate(headers):
-            if not h: final_headers.append(f"未命名欄位_{i}")
+            if not h: final_headers.append(f"未命名_{i}")
             elif h in final_headers: final_headers.append(f"{h}_{i}")
             else: final_headers.append(h)
 
@@ -93,10 +96,13 @@ def load_history_from_gs():
         mask = df.astype(str).apply(lambda x: x.str.strip() != "").any(axis=1)
         df = df[mask]
 
-        return df
+        for col in HISTORY_COLUMNS:
+            if col not in df.columns: 
+                df[col] = ""
+        return df[HISTORY_COLUMNS].copy()
     except Exception as e:
         st.error(f"讀取歷史紀錄發生異常: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=HISTORY_COLUMNS)
 
 def save_inventory_to_gs(df):
     try:
@@ -110,18 +116,35 @@ def save_inventory_to_gs(df):
         st.error(f"儲存庫存失敗: {e}")
 
 def append_history_batch(log_entries):
+    """改用與庫存相同的「全覆蓋寫入法」，徹底消滅 Append 幽靈空行問題"""
     if not log_entries: return
     try:
+        # 1. 抓取現在所有歷史紀錄 (已經過濾掉空行)
+        df_hist = load_history_from_gs()
+        
+        # 2. 轉為 DataFrame 並合併
+        new_df = pd.DataFrame(log_entries)
+        df_hist = pd.concat([df_hist, new_df], ignore_index=True)
+        
+        # 3. 確保欄位正確
+        for col in HISTORY_COLUMNS:
+            if col not in df_hist.columns:
+                df_hist[col] = ""
+        df_hist = df_hist[HISTORY_COLUMNS]
+        
+        # 4. 寫回 Google Sheets
         client = get_gs_client()
         wb = client.open_by_key(SHEET_ID)
         try:
             ws = wb.worksheet("History")
         except gspread.exceptions.WorksheetNotFound:
             ws = wb.add_worksheet(title="History", rows="1000", cols="20")
-            ws.append_row(HISTORY_COLUMNS)
+            
+        df_to_save = df_hist.fillna("").astype(str)
+        values = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
+        ws.clear() # 徹底清空，不管以前在第幾行
+        ws.update(range_name='A1', values=values) # 從 A1 重新寫入
         
-        rows = [[str(entry.get(col, "")) for col in HISTORY_COLUMNS] for entry in log_entries]
-        ws.append_rows(rows)
     except Exception as e:
         st.error(f"❌ 寫入歷史紀錄失敗: {e}")
 
@@ -417,7 +440,7 @@ elif page == "🧮 設計領料":
             st.rerun()
 
 # ==========================================
-# § 7 歷史紀錄頁面 (加入深度診斷功能)
+# § 7 歷史紀錄頁面
 # ==========================================
 elif page == "📜 紀錄查詢":
     st.header("📜 歷史出入庫紀錄")
@@ -426,26 +449,4 @@ elif page == "📜 紀錄查詢":
     if not hist_df.empty:
         st.dataframe(hist_df.iloc[::-1], use_container_width=True)
     else:
-        st.warning("⚠️ 系統目前讀取到的紀錄筆數為 0。")
-        st.info("💡 **啟動深度診斷模式...**")
-        try:
-            client = get_gs_client()
-            wb = client.open_by_key(SHEET_ID)
-            sheet_names = [s.title for s in wb.worksheets()]
-            st.write(f"1️⃣ **目前試算表包含的分頁有**： {', '.join(sheet_names)}")
-            
-            if "History" in sheet_names:
-                ws = wb.worksheet("History")
-                val = ws.get_all_values()
-                st.write(f"2️⃣ **History 分頁總共有**： {len(val)} 列資料 (包含標題列)")
-                if len(val) > 0:
-                    st.write("3️⃣ **第一列 (標題) 內容**：", val[0])
-                if len(val) > 1:
-                    st.write("4️⃣ **第二列 (首筆資料) 內容**：", val[1])
-                
-                if len(val) >= 2:
-                    st.error("❌ 系統偵測到有資料，但因為某些欄位格式被過濾掉了。以上面顯示的資料為主。")
-            else:
-                st.error("❌ **嚴重錯誤：找不到名為 `History` 的分頁！** 請確認分頁名稱是否拼錯 (例如多了空白鍵)。")
-        except Exception as e:
-            st.error(f"診斷過程失敗: {e}")
+        st.info("目前尚無歷史紀錄。")
