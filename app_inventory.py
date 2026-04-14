@@ -155,9 +155,11 @@ if "inventory" not in st.session_state:
 if "current_design" not in st.session_state:
     st.session_state["current_design"] = []
 
+st.title("💎 IF Crystal 進出庫系統")
+
 with st.sidebar:
-    st.title("💎 進出庫系統")
-    st.caption("所有人皆可使用")
+    st.title("💎 IF Crystal")
+    st.caption("進出庫系統 — 所有人皆可使用")
     page = st.radio("功能導覽", ["📦 庫存總覽", "🧮 設計領料 (出庫)", "📥 歸還入庫", "📜 進出紀錄"])
 
     if st.button("🔄 刷新庫存資料"):
