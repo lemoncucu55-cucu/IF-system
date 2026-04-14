@@ -176,14 +176,16 @@ if not st.session_state["authenticated"]:
     st.stop()
 
 # ---- 已登入 ----
+st.title("💎 IF Crystal 進貨管理系統")
 if "inventory" not in st.session_state:
     st.session_state["inventory"] = load_inventory_from_gs()
 if "current_design" not in st.session_state:
     st.session_state["current_design"] = []
 
 with st.sidebar:
-    st.title("🔒 進貨管理系統")
-    st.caption("主管專用")
+    st.title("💎 IF Crystal")
+    st.caption("進貨管理系統 — 主管專用")
+
     page = st.radio("功能導覽", ["✨ 新品建檔", "🔄 補貨進貨", "🧮 設計領料", "🛠️ 資料修改", "📊 庫存總表", "📜 進貨紀錄"])
 
     if st.button("🔄 強制刷新雲端資料"):
