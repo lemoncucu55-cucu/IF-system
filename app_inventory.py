@@ -206,7 +206,7 @@ elif page == "🧮 設計領料 (出庫)":
 
     col_info1, col_info2, col_info3 = st.columns([1, 1, 2])
     order_id = col_info1.text_input("設計單號", f"DES-{date.today().strftime('%m%d')}")
-    operator = col_info2.text_input("領料人")
+    operator = col_info2.selectbox("領料人", ["Imeng", "千畇"])
     order_note = col_info3.text_input("備註 (用途/客戶)")
 
     # 待領清單
@@ -299,7 +299,7 @@ elif page == "📥 歸還入庫":
 
             c1, c2, c3 = st.columns(3)
             return_qty = c1.number_input("歸還數量", min_value=1, value=1)
-            return_operator = c2.text_input("歸還人")
+            return_operator = c2.selectbox("歸還人", ["Imeng", "千畇"])
             return_note = c3.text_input("備註")
 
             if st.form_submit_button("✅ 確認歸還入庫", use_container_width=True):
