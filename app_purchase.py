@@ -351,7 +351,7 @@ elif page == "🧮 設計領料":
 
     col_info1, col_info2, col_info3 = st.columns([1, 1, 2])
     order_id = col_info1.text_input("設計單號", f"DES-{date.today().strftime('%m%d')}")
-    operator = col_info2.text_input("領料人")
+    operator = col_info2.selectbox("領料人", ["Imeng", "千畇"])
     order_note = col_info3.text_input("備註 (用途/客戶)")
 
     if st.session_state["current_design"]:
