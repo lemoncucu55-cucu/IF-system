@@ -98,7 +98,6 @@ with st.sidebar:
         "🔄 訂單管理",
         "📜 訂單紀錄"
     ])
-
     if st.button("🔄 刷新資料"):
         get_gs_client.clear()
         st.rerun()
@@ -175,60 +174,121 @@ elif page == "📋 訂單列表":
         if search_customer:
             display_df = display_df[display_df["客戶名稱"].str.contains(search_customer, case=False, na=False)]
 
-              if display_df.empty:
+        if display_df.empty:
             st.info("篩選後沒有訂單。")
         else:
             st.dataframe(display_df.iloc[::-1], use_container_width=True)
             st.caption(f"共 {len(display_df)} 筆訂單")
 
-            st.divider()
-            st.subheader("✏️ 修改訂單")
-            sel_edit_id = st.selectbox("選擇要修改的訂單", display_df["訂單編號"].tolist()[::-1], key="list_edit_sel")
-            edit_idx = orders_df[orders_df["訂單編號"] == sel_edit_id].index[0]
-            edit_row = orders_df.loc[edit_idx]
+        st.divider()
+        st.subheader("✏️ 修改訂單")
+
+        all_ids = orders_df["訂單編號"].tolist()
+        sel_edit_id = st.selectbox("選擇要修改的訂單", all_ids[::-1], key="list_edit_sel")
+        edit_idx = orders_df[orders_df["訂單編號"] == sel_edit_id].index[0]
+        edit_row = orders_df.loc[edit_idx]
+
+        with st.container(border=True):
+            st.write(f"**客戶：** {edit_row['客戶名稱']} | **狀態：** {edit_row['狀態']} | **建立時間：** {edit_row['建立時間']}")
+
+        with st.form("list_edit_form"):
+            c1, c2 = st.columns(2)
+            e_name = c1.text_input("客戶名稱", value=edit_row["客戶名稱"])
+            e_phone = c2.text_input("客戶電話", value=edit_row["客戶電話"])
+
+            c3, c4, c5 = st.columns(3)
+            e_type = c3.selectbox("商品種類", ["客製", "公版"],
+                index=["客製", "公版"].index(edit_row["商品種類"]) if edit_row["商品種類"] in ["客製", "公版"] else 0)
+            e_creator = c4.selectbox("建單人", ["Imeng", "千畇"],
+                index=["Imeng", "千畇"].index(edit_row["建單人"]) if edit_row["建單人"] in ["Imeng", "千畇"] else 0)
+            e_price = c5.number_input("總售價 ($)", value=float(edit_row["總售價"]) if edit_row["總售價"] else 0.0)
+
+            wuxing_opts = ["金", "木", "水", "火", "土"]
+            c6, c7 = st.columns(2)
+            current_xi = [x for x in edit_row["喜神"].split("、") if x] if edit_row["喜神"] else []
+            current_ji = [x for x in edit_row["忌神"].split("、") if x] if edit_row["忌神"] else []
+            e_xi = c6.multiselect("喜神", wuxing_opts, default=current_xi)
+            e_ji = c7.multiselect("忌神", wuxing_opts, default=current_ji)
+
+            e_status = st.selectbox("狀態", STATUS_FLOW,
+                index=STATUS_FLOW.index(edit_row["狀態"]) if edit_row["狀態"] in STATUS_FLOW else 0)
+            e_note = st.text_area("備註", value=edit_row["備註"])
+
+            if st.form_submit_button("💾 儲存修改", use_container_width=True):
+                orders_df.loc[edit_idx, "客戶名稱"] = str(e_name)
+                orders_df.loc[edit_idx, "客戶電話"] = str(e_phone)
+                orders_df.loc[edit_idx, "商品種類"] = str(e_type)
+                orders_df.loc[edit_idx, "建單人"] = str(e_creator)
+                orders_df.loc[edit_idx, "總售價"] = str(e_price)
+                orders_df.loc[edit_idx, "喜神"] = "、".join(e_xi)
+                orders_df.loc[edit_idx, "忌神"] = "、".join(e_ji)
+                orders_df.loc[edit_idx, "狀態"] = str(e_status)
+                orders_df.loc[edit_idx, "備註"] = str(e_note)
+                save_orders(orders_df)
+                st.success(f"✅ 訂單 {sel_edit_id} 已更新！")
+                time.sleep(1)
+                st.rerun()
+
+# ==========================================
+# § 6 訂單管理（狀態變更）
+# ==========================================
+elif page == "🔄 訂單管理":
+    st.header("🔄 訂單管理")
+
+    orders_df = load_orders()
+
+    if orders_df.empty:
+        st.info("目前沒有任何訂單。")
+    else:
+        active_orders = orders_df[~orders_df["狀態"].isin(["已完成", "已取消"])]
+        if active_orders.empty:
+            st.success("🎉 所有訂單都已處理完成！")
+        else:
+            active_orders = active_orders.copy()
+            active_orders["display"] = active_orders.apply(
+                lambda r: f"[{r['狀態']}] {r['訂單編號']} — {r['客戶名稱']} | {r['商品種類']} | ${r['總售價']}", axis=1
+            )
+            sel_order_display = st.selectbox("選擇要管理的訂單", active_orders["display"].tolist()[::-1])
+            sel_idx = active_orders[active_orders["display"] == sel_order_display].index[0]
+            sel_order = orders_df.loc[sel_idx]
+            order_id = sel_order["訂單編號"]
 
             with st.container(border=True):
-                st.write(f"**客戶：** {edit_row['客戶名稱']} | **狀態：** {edit_row['狀態']} | **建立時間：** {edit_row['建立時間']}")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("訂單編號", order_id)
+                c2.metric("客戶", sel_order["客戶名稱"])
+                c3.metric("總售價", f"${float(sel_order['總售價']):,.2f}" if sel_order["總售價"] else "$0")
+                c4.metric("目前狀態", sel_order["狀態"])
+                st.write(f"**電話：** {sel_order['客戶電話']} | **商品種類：** {sel_order['商品種類']} | **建單人：** {sel_order['建單人']} | **建立時間：** {sel_order['建立時間']}")
+                st.write(f"**喜神：** {sel_order['喜神'] if sel_order['喜神'] else '-'} | **忌神：** {sel_order['忌神'] if sel_order['忌神'] else '-'}")
+                if sel_order["備註"]:
+                    st.write(f"**備註：** {sel_order['備註']}")
 
-            with st.form("list_edit_form"):
-                c1, c2 = st.columns(2)
-                e_name = c1.text_input("客戶名稱", value=edit_row["客戶名稱"])
-                e_phone = c2.text_input("客戶電話", value=edit_row["客戶電話"])
-
-                c3, c4, c5 = st.columns(3)
-                e_type = c3.selectbox("商品種類", ["客製", "公版"],
-                    index=["客製", "公版"].index(edit_row["商品種類"]) if edit_row["商品種類"] in ["客製", "公版"] else 0)
-                e_creator = c4.selectbox("建單人", ["Imeng", "千畇"],
-                    index=["Imeng", "千畇"].index(edit_row["建單人"]) if edit_row["建單人"] in ["Imeng", "千畇"] else 0)
-                e_price = c5.number_input("總售價 ($)", value=float(edit_row["總售價"]) if edit_row["總售價"] else 0.0)
+            st.divider()
+            st.subheader("✏️ 修改訂單")
+            with st.form("edit_order_form"):
+                c_e1, c_e2 = st.columns(2)
+                edit_price = c_e1.number_input("修改總售價 ($)", value=float(sel_order["總售價"]) if sel_order["總售價"] else 0.0)
+                edit_note = c_e2.text_input("修改備註", value=sel_order["備註"])
 
                 wuxing_opts = ["金", "木", "水", "火", "土"]
-                c6, c7 = st.columns(2)
-                current_xi = [x for x in edit_row["喜神"].split("、") if x] if edit_row["喜神"] else []
-                current_ji = [x for x in edit_row["忌神"].split("、") if x] if edit_row["忌神"] else []
-                e_xi = c6.multiselect("喜神", wuxing_opts, default=current_xi)
-                e_ji = c7.multiselect("忌神", wuxing_opts, default=current_ji)
+                c_e3, c_e4 = st.columns(2)
+                current_xi = [x for x in sel_order["喜神"].split("、") if x] if sel_order["喜神"] else []
+                current_ji = [x for x in sel_order["忌神"].split("、") if x] if sel_order["忌神"] else []
+                edit_xi = c_e3.multiselect("修改喜神", wuxing_opts, default=current_xi)
+                edit_ji = c_e4.multiselect("修改忌神", wuxing_opts, default=current_ji)
 
-                e_status = st.selectbox("狀態", STATUS_FLOW,
-                    index=STATUS_FLOW.index(edit_row["狀態"]) if edit_row["狀態"] in STATUS_FLOW else 0)
-                e_note = st.text_area("備註", value=edit_row["備註"])
-
-                if st.form_submit_button("💾 儲存修改", use_container_width=True):
-                    orders_df.loc[edit_idx, "客戶名稱"] = str(e_name)
-                    orders_df.loc[edit_idx, "客戶電話"] = str(e_phone)
-                    orders_df.loc[edit_idx, "商品種類"] = str(e_type)
-                    orders_df.loc[edit_idx, "建單人"] = str(e_creator)
-                    orders_df.loc[edit_idx, "總售價"] = str(e_price)
-                    orders_df.loc[edit_idx, "喜神"] = "、".join(e_xi)
-                    orders_df.loc[edit_idx, "忌神"] = "、".join(e_ji)
-                    orders_df.loc[edit_idx, "狀態"] = str(e_status)
-                    orders_df.loc[edit_idx, "備註"] = str(e_note)
+                if st.form_submit_button("💾 儲存修改"):
+                    orders_df.loc[sel_idx, "總售價"] = str(edit_price)
+                    orders_df.loc[sel_idx, "備註"] = str(edit_note)
+                    orders_df.loc[sel_idx, "喜神"] = "、".join(edit_xi)
+                    orders_df.loc[sel_idx, "忌神"] = "、".join(edit_ji)
                     save_orders(orders_df)
-                    st.success(f"✅ 訂單 {sel_edit_id} 已更新！")
+                    st.success("✅ 訂單已更新！")
                     time.sleep(1)
                     st.rerun()
-            st.divider()
 
+            st.divider()
             st.subheader("📌 變更狀態")
             current_status = sel_order["狀態"]
 
