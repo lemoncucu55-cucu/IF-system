@@ -12,7 +12,7 @@ SHEET_ID = "1gf-pn034w0oZx8jWDUJvmIyHX_O7eHbiBb9diVSBX0Q"
 KEY_FILE = "google_key.json"
 
 ORDER_COLUMNS = [
-    '訂單編號', '建立時間', '客戶名稱', '客戶電話', '商品種類', '總售價', '備註', '狀態', '建單人'
+    '訂單編號', '建立時間', '客戶名稱', '客戶電話', '商品種類', '喜神', '忌神', '總售價', '備註', '狀態', '建單人'
 ]
 
 STATUS_FLOW = ["待確認", "已確認", "已出貨", "已完成", "已取消"]
@@ -121,6 +121,12 @@ if page == "📝 建立訂單":
         order_creator = c4.selectbox("建單人", ["Imeng", "千畇"])
         total_price = c5.number_input("總售價 ($)（可之後再填）", min_value=0.0, value=0.0)
 
+        st.subheader("五行")
+        wuxing_opts = ["金", "木", "水", "火", "土"]
+        c6, c7 = st.columns(2)
+        xi_shen = c6.multiselect("喜神", wuxing_opts)
+        ji_shen = c7.multiselect("忌神", wuxing_opts)
+
         order_note = st.text_area("備註")
 
         if st.form_submit_button("✅ 建立訂單", use_container_width=True):
@@ -135,6 +141,8 @@ if page == "📝 建立訂單":
                     "客戶名稱": customer_name,
                     "客戶電話": customer_phone,
                     "商品種類": product_type,
+                    "喜神": "、".join(xi_shen),
+                    "忌神": "、".join(ji_shen),
                     "總售價": str(total_price),
                     "備註": order_note,
                     "狀態": "待確認",
@@ -197,7 +205,6 @@ elif page == "🔄 訂單管理":
             sel_order = orders_df.loc[sel_idx]
             order_id = sel_order["訂單編號"]
 
-            # 顯示訂單資訊
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("訂單編號", order_id)
@@ -206,21 +213,30 @@ elif page == "🔄 訂單管理":
                 c4.metric("目前狀態", sel_order["狀態"])
 
                 st.write(f"**電話：** {sel_order['客戶電話']} | **商品種類：** {sel_order['商品種類']} | **建單人：** {sel_order['建單人']} | **建立時間：** {sel_order['建立時間']}")
+                st.write(f"**喜神：** {sel_order['喜神'] if sel_order['喜神'] else '-'} | **忌神：** {sel_order['忌神'] if sel_order['忌神'] else '-'}")
                 if sel_order["備註"]:
                     st.write(f"**備註：** {sel_order['備註']}")
 
             st.divider()
 
-            # 修改售價與備註
             st.subheader("✏️ 修改訂單")
             with st.form("edit_order_form"):
                 c_e1, c_e2 = st.columns(2)
                 edit_price = c_e1.number_input("修改總售價 ($)", value=float(sel_order["總售價"]) if sel_order["總售價"] else 0.0)
                 edit_note = c_e2.text_input("修改備註", value=sel_order["備註"])
 
+                wuxing_opts = ["金", "木", "水", "火", "土"]
+                c_e3, c_e4 = st.columns(2)
+                current_xi = [x for x in sel_order["喜神"].split("、") if x] if sel_order["喜神"] else []
+                current_ji = [x for x in sel_order["忌神"].split("、") if x] if sel_order["忌神"] else []
+                edit_xi = c_e3.multiselect("修改喜神", wuxing_opts, default=current_xi)
+                edit_ji = c_e4.multiselect("修改忌神", wuxing_opts, default=current_ji)
+
                 if st.form_submit_button("💾 儲存修改"):
                     orders_df.loc[sel_idx, "總售價"] = str(edit_price)
                     orders_df.loc[sel_idx, "備註"] = str(edit_note)
+                    orders_df.loc[sel_idx, "喜神"] = "、".join(edit_xi)
+                    orders_df.loc[sel_idx, "忌神"] = "、".join(edit_ji)
                     save_orders(orders_df)
                     st.success("✅ 訂單已更新！")
                     time.sleep(1)
@@ -228,7 +244,6 @@ elif page == "🔄 訂單管理":
 
             st.divider()
 
-            # 狀態操作
             st.subheader("📌 變更狀態")
             current_status = sel_order["狀態"]
 
