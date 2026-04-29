@@ -14,11 +14,13 @@ KEY_FILE  = "google_key.json"
 ORDER_COLUMNS = [
     '訂單編號', '建立時間', '客戶名稱', '客戶電話', '商品種類',
     '手圍', '生日', '出生時間', '喜神', '忌神',
+    '流年去年', '流年今年', '流年明年', '階段數',
     '總售價', '備註', '狀態', '建單人'
 ]
 
 CUSTOMER_COLUMNS = [
-    '客戶名稱', '客戶電話', '手圍', '喜神', '忌神', '生日', '出生時間'
+    '客戶名稱', '客戶電話', '手圍', '喜神', '忌神', '生日', '出生時間',
+    '流年去年', '流年今年', '流年明年', '階段數'
 ]
 
 STATUS_FLOW = ["待確認", "已確認", "已出貨", "已完成", "已取消"]
@@ -31,7 +33,6 @@ def _digit_sum(n):
     return sum(int(d) for d in str(n))
 
 def _reduce_chain(n):
-    """持續縮減到個位，回傳過程列表，例如 19 → [19, 10, 1]"""
     chain = [n]
     while n >= 10:
         n = _digit_sum(n)
@@ -39,34 +40,18 @@ def _reduce_chain(n):
     return chain
 
 def calc_liunian(year, birth_month, birth_day):
-    """
-    流年 = 年份所有數字 + 生日月數字 + 生日日數字，全部相加後縮減
-    例：2025/10/10 → 2+0+2+5+1+0+1+0 = 11 → 1+1 = 2，顯示 "11/2"
-    """
     digits_str = str(year) + str(birth_month) + str(birth_day)
     total = sum(int(d) for d in digits_str)
     chain = _reduce_chain(total)
     return "/".join(str(x) for x in chain)
 
 def calc_jieduan(birth_year, birth_month):
-    """
-    階段數 = 出生年所有數字 + 生日月數字，全部相加後縮減（個人固定數）
-    例：2000/10 → 2+0+0+0+1+0 = 3，顯示 "3"
-    """
     digits_str = str(birth_year) + str(birth_month)
     total = sum(int(d) for d in digits_str)
     chain = _reduce_chain(total)
     return "/".join(str(x) for x in chain)
 
 def personal_year_range(birth_month, birth_day, today=None):
-    """
-    依生日是否已過決定三個年份（去年/今年/明年，以個人年為基準）
-    ・尚未過生日 → 個人年 = 本曆年 - 1
-    ・已過生日   → 個人年 = 本曆年
-    範例（今天 2026-04-28）：
-      生日 10/10 → 尚未過 → 個人年 2025 → 顯示 [2024, 2025, 2026]
-      生日  3/01 → 已過   → 個人年 2026 → 顯示 [2025, 2026, 2027]
-    """
     if today is None:
         today = datetime.now().date()
     birthday_passed = (today.month, today.day) >= (birth_month, birth_day)
@@ -74,7 +59,6 @@ def personal_year_range(birth_month, birth_day, today=None):
     return [personal_year - 1, personal_year, personal_year + 1]
 
 def parse_birthday(bday_str):
-    """解析生日字串（YYYY/MM/DD 或 YYYY-MM-DD），回傳 (year, month, day) 或 None"""
     if not bday_str or not str(bday_str).strip():
         return None
     for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
@@ -86,7 +70,6 @@ def parse_birthday(bday_str):
     return None
 
 def render_numerology_table(bday_str):
-    """根據生日字串顯示三年流年 × 階段數對照表，成功回傳 True"""
     parsed = parse_birthday(bday_str)
     if not parsed:
         st.warning("⚠️ 生日格式錯誤，請使用 YYYY/MM/DD（例：2000/10/10）")
@@ -135,7 +118,7 @@ def _load_sheet(tab, columns):
         try:
             ws = wb.worksheet(tab)
         except gspread.exceptions.WorksheetNotFound:
-            ws = wb.add_worksheet(title=tab, rows="1000", cols="20")
+            ws = wb.add_worksheet(title=tab, rows="1000", cols="30")
             ws.update(range_name='A1', values=[columns])
             return pd.DataFrame(columns=columns)
         values = ws.get_all_values()
@@ -163,23 +146,43 @@ def _save_sheet(tab, df):
         try:
             ws = wb.worksheet(tab)
         except gspread.exceptions.WorksheetNotFound:
-            ws = wb.add_worksheet(title=tab, rows="1000", cols="20")
+            ws = wb.add_worksheet(title=tab, rows="1000", cols="30")
         data = df.fillna("").astype(str)
         ws.clear()
         ws.update(range_name='A1', values=[data.columns.tolist()] + data.values.tolist())
     except Exception as e:
         st.error(f"儲存 {tab} 失敗: {e}")
 
+def fill_numerology(df):
+    """根據每列的「生日」欄位，自動填入：流年去年/今年/明年/階段數"""
+    df = df.copy()
+    for col in ["流年去年", "流年今年", "流年明年", "階段數"]:
+        if col not in df.columns:
+            df[col] = ""
+
+    for idx, row in df.iterrows():
+        bday_str = str(row.get("生日", "")).strip()
+        parsed = parse_birthday(bday_str)
+        if not parsed:
+            df.loc[idx, ["流年去年", "流年今年", "流年明年", "階段數"]] = ""
+            continue
+        by, bm, bd = parsed
+        years = personal_year_range(bm, bd)
+        df.loc[idx, "流年去年"] = calc_liunian(years[0], bm, bd)
+        df.loc[idx, "流年今年"] = calc_liunian(years[1], bm, bd)
+        df.loc[idx, "流年明年"] = calc_liunian(years[2], bm, bd)
+        df.loc[idx, "階段數"]   = calc_jieduan(by, bm)
+    return df
+
 def load_orders():      return _load_sheet("Orders",    ORDER_COLUMNS)
-def save_orders(df):    _save_sheet("Orders", df)
+def save_orders(df):    _save_sheet("Orders",    fill_numerology(df))
 def load_customers():   return _load_sheet("Customers", CUSTOMER_COLUMNS)
-def save_customers(df): _save_sheet("Customers", df)
+def save_customers(df): _save_sheet("Customers", fill_numerology(df))
 
 def generate_order_id():
     return f"ORD-{datetime.now().strftime('%m%d%H%M%S')}"
 
 def safe_get(row, col, default=""):
-    """安全取得 Series 欄位值，避免 KeyError"""
     try:
         val = row[col]
         return val if pd.notna(val) and str(val).strip() else default
@@ -187,10 +190,6 @@ def safe_get(row, col, default=""):
         return default
 
 def sync_customers_from_orders():
-    """
-    掃描 Orders 表，將尚未存在於 Customers 表的客戶自動新增進去。
-    已存在的客戶不覆蓋。回傳新增數量。
-    """
     orders_df    = load_orders()
     customers_df = load_customers()
 
@@ -200,11 +199,10 @@ def sync_customers_from_orders():
     existing_names = set(customers_df["客戶名稱"].tolist())
     new_rows = []
 
-    # 對每個客戶名稱，取最新一筆訂單的資料
     for name, group in orders_df.groupby("客戶名稱"):
         if not name or name in existing_names:
             continue
-        latest = group.iloc[-1]  # 最新訂單
+        latest = group.iloc[-1]
         new_rows.append({
             "客戶名稱": name,
             "客戶電話": safe_get(latest, "客戶電話"),
@@ -330,13 +328,14 @@ if page == "📝 建立訂單":
                     "出生時間": birth_time,
                     "喜神":     "、".join(xi_shen),
                     "忌神":     "、".join(ji_shen),
+                    "流年去年": "", "流年今年": "", "流年明年": "", "階段數": "",
                     "總售價":   str(total_price),
                     "備註":     order_note,
                     "狀態":     "待確認",
                     "建單人":   order_creator,
                 }
                 orders_df = pd.concat([orders_df, pd.DataFrame([new_order])], ignore_index=True)
-                save_orders(orders_df)
+                save_orders(orders_df)   # fill_numerology 在 save_orders 內自動執行
                 st.success(f"✅ 訂單 {order_id} 已建立！")
                 time.sleep(1.5)
                 st.rerun()
@@ -579,7 +578,6 @@ elif page == "👥 客戶管理":
     tab1, tab2 = st.tabs(["➕ 新增客戶", "✏️ 查看 / 編輯客戶"])
 
     with tab1:
-        # ── 從訂單自動匯入 ──
         with st.container(border=True):
             st.markdown("#### 🔃 從訂單資料自動匯入客戶")
             st.caption("掃描所有訂單，將尚未建檔的客戶自動加入客戶資料表（已存在的不覆蓋）")
@@ -615,13 +613,11 @@ elif page == "👥 客戶管理":
                     st.error(f"❌ 客戶「{new_name}」已存在")
                 else:
                     row = {
-                        "客戶名稱": new_name,
-                        "客戶電話": new_phone,
-                        "手圍":    new_wrist,
-                        "喜神":    "、".join(new_xi),
-                        "忌神":    "、".join(new_ji),
-                        "生日":    new_bday,
+                        "客戶名稱": new_name, "客戶電話": new_phone,
+                        "手圍": new_wrist, "喜神": "、".join(new_xi),
+                        "忌神": "、".join(new_ji), "生日": new_bday,
                         "出生時間": new_btime,
+                        "流年去年": "", "流年今年": "", "流年明年": "", "階段數": "",
                     }
                     customers_df = pd.concat([customers_df, pd.DataFrame([row])], ignore_index=True)
                     save_customers(customers_df)
