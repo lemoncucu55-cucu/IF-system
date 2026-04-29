@@ -186,6 +186,42 @@ def safe_get(row, col, default=""):
     except (KeyError, TypeError):
         return default
 
+def sync_customers_from_orders():
+    """
+    掃描 Orders 表，將尚未存在於 Customers 表的客戶自動新增進去。
+    已存在的客戶不覆蓋。回傳新增數量。
+    """
+    orders_df    = load_orders()
+    customers_df = load_customers()
+
+    if orders_df.empty:
+        return 0
+
+    existing_names = set(customers_df["客戶名稱"].tolist())
+    new_rows = []
+
+    # 對每個客戶名稱，取最新一筆訂單的資料
+    for name, group in orders_df.groupby("客戶名稱"):
+        if not name or name in existing_names:
+            continue
+        latest = group.iloc[-1]  # 最新訂單
+        new_rows.append({
+            "客戶名稱": name,
+            "客戶電話": safe_get(latest, "客戶電話"),
+            "手圍":    safe_get(latest, "手圍"),
+            "喜神":    safe_get(latest, "喜神"),
+            "忌神":    safe_get(latest, "忌神"),
+            "生日":    safe_get(latest, "生日"),
+            "出生時間": safe_get(latest, "出生時間"),
+        })
+
+    if new_rows:
+        customers_df = pd.concat(
+            [customers_df, pd.DataFrame(new_rows)], ignore_index=True)
+        save_customers(customers_df)
+
+    return len(new_rows)
+
 # ==========================================
 # § 4 系統初始化
 # ==========================================
@@ -206,6 +242,15 @@ with st.sidebar:
     if st.button("🔄 刷新資料"):
         get_gs_client.clear()
         st.rerun()
+
+    st.divider()
+    if st.button("🔃 同步訂單→客戶資料", use_container_width=True,
+                 help="將訂單中尚未建檔的客戶自動加入客戶資料表"):
+        added = sync_customers_from_orders()
+        if added:
+            st.success(f"✅ 已新增 {added} 位客戶")
+        else:
+            st.info("客戶資料已是最新，無需同步")
 
 # ==========================================
 # § 5 建立訂單
@@ -534,7 +579,21 @@ elif page == "👥 客戶管理":
     tab1, tab2 = st.tabs(["➕ 新增客戶", "✏️ 查看 / 編輯客戶"])
 
     with tab1:
-        st.subheader("新增客戶基本資料")
+        # ── 從訂單自動匯入 ──
+        with st.container(border=True):
+            st.markdown("#### 🔃 從訂單資料自動匯入客戶")
+            st.caption("掃描所有訂單，將尚未建檔的客戶自動加入客戶資料表（已存在的不覆蓋）")
+            if st.button("立即同步", type="primary", use_container_width=True):
+                added = sync_customers_from_orders()
+                customers_df = load_customers()
+                if added:
+                    st.success(f"✅ 已從訂單匯入 {added} 位新客戶！")
+                else:
+                    st.info("✅ 所有訂單客戶均已建檔，無需新增。")
+                time.sleep(1); st.rerun()
+
+        st.divider()
+        st.subheader("手動新增客戶基本資料")
         with st.form("add_customer_form"):
             a1, a2 = st.columns(2)
             new_name  = a1.text_input("客戶名稱 *")
