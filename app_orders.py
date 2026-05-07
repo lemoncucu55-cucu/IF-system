@@ -28,7 +28,7 @@ CUSTOMER_COLUMNS = [
 
 DELIVERY_TYPES = ["🏠 住家", "🏪 超商"]
 
-STATUS_FLOW    = ["待確認", "已確認", "已出貨", "已完成", "已取消"]
+STATUS_FLOW    = ["待確認", "已確認", "已付款", "已出貨", "已付款已出貨", "已完成", "已取消"]
 WUXING_OPTS    = ["金", "木", "水", "火", "土"]
 
 RELATIONSHIP_COLUMNS = ['客戶A', '關係類型', '客戶B', '備註', '建立時間']
