@@ -20,8 +20,11 @@ ORDER_COLUMNS = [
 
 CUSTOMER_COLUMNS = [
     '客戶名稱', '客戶電話', '手圍', '喜神', '忌神', '生日', '出生時間',
-    '流年去年', '流年今年', '流年明年', '階段數'
+    '流年去年', '流年今年', '流年明年', '階段數',
+    '收件人姓名', '收件電話', '收件類型', '收件地址', '超商名稱門市'
 ]
+
+DELIVERY_TYPES = ["🏠 住家", "🏪 超商"]
 
 STATUS_FLOW    = ["待確認", "已確認", "已出貨", "已完成", "已取消"]
 WUXING_OPTS    = ["金", "木", "水", "火", "土"]
@@ -124,7 +127,7 @@ def _load_sheet(tab, columns):
         try:
             ws = wb.worksheet(tab)
         except gspread.exceptions.WorksheetNotFound:
-            ws = wb.add_worksheet(title=tab, rows="1000", cols="30")
+            ws = wb.add_worksheet(title=tab, rows="1000", cols="20")
             ws.update(range_name='A1', values=[columns])
             return pd.DataFrame(columns=columns)
         values = ws.get_all_values()
@@ -152,7 +155,7 @@ def _save_sheet(tab, df):
         try:
             ws = wb.worksheet(tab)
         except gspread.exceptions.WorksheetNotFound:
-            ws = wb.add_worksheet(title=tab, rows="1000", cols="30")
+            ws = wb.add_worksheet(title=tab, rows="1000", cols="20")
         data = df.fillna("").astype(str)
         ws.clear()
         ws.update(range_name='A1', values=[data.columns.tolist()] + data.values.tolist())
@@ -221,16 +224,22 @@ def sync_customers_from_orders():
             continue
         latest = group.iloc[-1]
         new_rows.append({
-            "客戶名稱": name,
-            "客戶電話": safe_get(latest, "客戶電話"),
-            "手圍":    safe_get(latest, "手圍"),
-            "喜神":    safe_get(latest, "喜神"),
-            "忌神":    safe_get(latest, "忌神"),
-            "生日":    safe_get(latest, "生日"),
-            "出生時間": safe_get(latest, "出生時間"),
+            "客戶名稱":   name,
+            "客戶電話":   safe_get(latest, "客戶電話"),
+            "手圍":      safe_get(latest, "手圍"),
+            "喜神":      safe_get(latest, "喜神"),
+            "忌神":      safe_get(latest, "忌神"),
+            "生日":      safe_get(latest, "生日"),
+            "出生時間":   safe_get(latest, "出生時間"),
+            "收件人姓名": "",
+            "收件電話":   "",
+            "收件類型":   "",
+            "收件地址":   "",
+            "超商名稱門市": "",
         })
     if new_rows:
-        customers_df = pd.concat([customers_df, pd.DataFrame(new_rows)], ignore_index=True)
+        customers_df = pd.concat(
+            [customers_df, pd.DataFrame(new_rows)], ignore_index=True)
         save_customers(customers_df)
     return len(new_rows)
 
@@ -476,6 +485,7 @@ elif page == "🔄 訂單管理":
                 price_v = safe_get(sel_order, "總售價")
                 c3.metric("總售價",  f"${float(price_v):,.2f}" if price_v else "$0")
                 c4.metric("目前狀態", safe_get(sel_order, "狀態"))
+
                 st.write(
                     f"**電話：** {safe_get(sel_order,'客戶電話') or '-'} | "
                     f"**商品種類：** {safe_get(sel_order,'商品種類') or '-'} | "
@@ -488,6 +498,7 @@ elif page == "🔄 訂單管理":
                     f"**忌神：** {safe_get(sel_order,'忌神') or '-'}")
                 if safe_get(sel_order, "備註"):
                     st.write(f"**備註：** {sel_order['備註']}")
+
                 bday_val = safe_get(sel_order, "生日")
                 if bday_val:
                     st.markdown("**📊 流年 × 階段數 三年對照表**")
@@ -576,6 +587,7 @@ elif page == "📜 訂單紀錄":
             c4.metric("已完成總營收", f"${rev:,.2f}")
         except:
             c4.metric("已完成總營收", "$0")
+
         st.divider()
         st.dataframe(orders_df.iloc[::-1], use_container_width=True)
 
@@ -610,12 +622,21 @@ elif page == "👥 客戶管理":
 
             a3, a4, a5 = st.columns(3)
             new_wrist = a3.text_input("手圍")
-            new_bday  = a4.text_input("生日（YYYY/MM/DD）",  placeholder="例：2000/10/10")
+            new_bday  = a4.text_input("生日（YYYY/MM/DD）", placeholder="例：2000/10/10")
             new_btime = a5.text_input("出生時間（HH:MM）",  placeholder="例：08:30")
 
             a6, a7 = st.columns(2)
             new_xi = a6.multiselect("喜神", WUXING_OPTS)
             new_ji = a7.multiselect("忌神", WUXING_OPTS)
+
+            st.divider()
+            st.markdown("#### 📦 收件資料")
+            d1, d2 = st.columns(2)
+            new_recv_name  = d1.text_input("收件人姓名", placeholder="例：王小明")
+            new_recv_phone = d2.text_input("收件電話",   placeholder="例：0912-345-678")
+            new_recv_addr  = st.text_input("收件地址",   placeholder="例：台北市信義區信義路五段7號 或 7-11 台北信義門市")
+            new_delivery_type = st.selectbox("收件類型", DELIVERY_TYPES, key="add_delivery_type")
+            new_store_name = st.text_input("超商名稱／門市（超商才需填）", placeholder="例：7-11 台北信義門市")
 
             if st.form_submit_button("✅ 新增客戶", use_container_width=True):
                 if not new_name:
@@ -624,11 +645,18 @@ elif page == "👥 客戶管理":
                     st.error(f"❌ 客戶「{new_name}」已存在")
                 else:
                     row = {
-                        "客戶名稱": new_name, "客戶電話": new_phone,
-                        "手圍": new_wrist, "喜神": "、".join(new_xi),
-                        "忌神": "、".join(new_ji), "生日": new_bday,
-                        "出生時間": new_btime,
-                        "流年去年": "", "流年今年": "", "流年明年": "", "階段數": "",
+                        "客戶名稱":   new_name,
+                        "客戶電話":   new_phone,
+                        "手圍":      new_wrist,
+                        "喜神":      "、".join(new_xi),
+                        "忌神":      "、".join(new_ji),
+                        "生日":      new_bday,
+                        "出生時間":   new_btime,
+                        "收件人姓名": new_recv_name,
+                        "收件電話":   new_recv_phone,
+                        "收件類型":   new_delivery_type,
+                        "收件地址":   new_recv_addr,
+                        "超商名稱門市": new_store_name,
                     }
                     customers_df = pd.concat([customers_df, pd.DataFrame([row])], ignore_index=True)
                     save_customers(customers_df)
@@ -662,6 +690,25 @@ elif page == "👥 客戶管理":
             else:
                 st.info("ℹ️ 請填寫生日後，系統將自動計算三年流年與階段數。")
 
+            # 顯示收件資料摘要
+            recv_type  = safe_get(cust_row, "收件類型")
+            recv_addr  = safe_get(cust_row, "收件地址")
+            recv_name  = safe_get(cust_row, "收件人姓名")
+            recv_phone = safe_get(cust_row, "收件電話")
+            store_name = safe_get(cust_row, "超商名稱門市")
+            if recv_type or recv_addr or recv_name:
+                with st.container(border=True):
+                    st.markdown("#### 📦 收件資料")
+                    sc1, sc2, sc3 = st.columns(3)
+                    sc1.write(f"**收件人：** {recv_name or '-'}")
+                    sc2.write(f"**收件電話：** {recv_phone or '-'}")
+                    sc3.write(f"**類型：** {recv_type or '-'}")
+                    if store_name:
+                        st.write(f"**超商門市：** {store_name}")
+                    if recv_addr:
+                        st.write(f"**地址：** {recv_addr}")
+
+            # 顯示關係鏈結摘要
             my_rels = get_customer_relations(sel_cust, rel_df_mgmt)
             if not my_rels.empty:
                 st.markdown("#### 🔗 關係鏈結")
@@ -686,18 +733,37 @@ elif page == "👥 客戶管理":
                 ec_xi = ec3.multiselect("喜神", WUXING_OPTS, default=cur_xi)
                 ec_ji = ec4.multiselect("忌神", WUXING_OPTS, default=cur_ji)
 
+                st.divider()
+                st.markdown("#### 📦 收件資料")
+                ed1, ed2 = st.columns(2)
+                ec_recv_name  = ed1.text_input("收件人姓名", value=safe_get(cust_row,"收件人姓名"))
+                ec_recv_phone = ed2.text_input("收件電話",   value=safe_get(cust_row,"收件電話"))
+                ec_recv_addr  = st.text_input("收件地址",    value=safe_get(cust_row,"收件地址"))
+
+                cur_dtype = safe_get(cust_row, "收件類型")
+                dtype_idx = DELIVERY_TYPES.index(cur_dtype) if cur_dtype in DELIVERY_TYPES else 0
+                ec_delivery_type = st.selectbox("收件類型", DELIVERY_TYPES,
+                                                index=dtype_idx, key="edit_delivery_type")
+                ec_store_name = st.text_input("超商名稱／門市（超商才需填）",
+                                              value=safe_get(cust_row,"超商名稱門市"))
+
                 col_save, col_del = st.columns(2)
                 save_btn = col_save.form_submit_button("💾 儲存修改",  use_container_width=True)
                 del_btn  = col_del.form_submit_button( "🗑️ 刪除此客戶", use_container_width=True)
 
                 if save_btn:
-                    customers_df.loc[cust_idx,"客戶名稱"] = str(ec_name)
-                    customers_df.loc[cust_idx,"客戶電話"] = str(ec_phone)
-                    customers_df.loc[cust_idx,"手圍"]     = str(ec_wrist)
-                    customers_df.loc[cust_idx,"生日"]     = str(ec_bday)
-                    customers_df.loc[cust_idx,"出生時間"] = str(ec_btime)
-                    customers_df.loc[cust_idx,"喜神"]     = "、".join(ec_xi)
-                    customers_df.loc[cust_idx,"忌神"]     = "、".join(ec_ji)
+                    customers_df.loc[cust_idx,"客戶名稱"]   = str(ec_name)
+                    customers_df.loc[cust_idx,"客戶電話"]   = str(ec_phone)
+                    customers_df.loc[cust_idx,"手圍"]       = str(ec_wrist)
+                    customers_df.loc[cust_idx,"生日"]       = str(ec_bday)
+                    customers_df.loc[cust_idx,"出生時間"]   = str(ec_btime)
+                    customers_df.loc[cust_idx,"喜神"]       = "、".join(ec_xi)
+                    customers_df.loc[cust_idx,"忌神"]       = "、".join(ec_ji)
+                    customers_df.loc[cust_idx,"收件人姓名"] = str(ec_recv_name)
+                    customers_df.loc[cust_idx,"收件電話"]   = str(ec_recv_phone)
+                    customers_df.loc[cust_idx,"收件類型"]   = str(ec_delivery_type)
+                    customers_df.loc[cust_idx,"收件地址"]   = str(ec_recv_addr)
+                    customers_df.loc[cust_idx,"超商名稱門市"] = str(ec_store_name)
                     save_customers(customers_df)
                     st.success(f"✅ 客戶「{sel_cust}」資料已更新！")
                     time.sleep(1); st.rerun()
@@ -769,7 +835,10 @@ elif page == "🔗 關係鏈結":
 
                 st.divider()
                 st.subheader("🗑️ 刪除關係")
-                del_opts = [f"{r['對象']}（{r['關係類型']}）" for _, r in my_rels.iterrows()]
+                del_opts = [
+                    f"{r['對象']}（{r['關係類型']}）"
+                    for _, r in my_rels.iterrows()
+                ]
                 del_sel = st.selectbox("選擇要刪除的關係", del_opts, key="rel_del_sel")
                 if st.button("🗑️ 確認刪除", type="secondary"):
                     del_target = del_sel.split("（")[0]
@@ -806,8 +875,10 @@ elif page == "🔗 關係鏈結":
                             st.warning("⚠️ 此兩位客戶之間已有關係鏈結，請至清單修改")
                         else:
                             new_rel = {
-                                "客戶A": cust_a, "關係類型": rel_type,
-                                "客戶B": cust_b, "備註": rel_note,
+                                "客戶A":   cust_a,
+                                "關係類型": rel_type,
+                                "客戶B":   cust_b,
+                                "備註":    rel_note,
                                 "建立時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             }
                             rel_df = pd.concat([rel_df, pd.DataFrame([new_rel])], ignore_index=True)
