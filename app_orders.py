@@ -12,11 +12,13 @@ SHEET_ID = "1gf-pn034w0oZx8jWDUJvmIyHX_O7eHbiBb9diVSBX0Q"
 KEY_FILE  = "google_key.json"
 
 ORDER_COLUMNS = [
-    '訂單編號', '建立時間', '客戶名稱', '客戶電話', '商品種類',
+    '訂單編號', '建立時間', '客戶名稱', '客戶電話', '商品種類', '客製品項',
     '手圍', '生日', '出生時間', '喜神', '忌神',
     '流年去年', '流年今年', '流年明年', '階段數',
     '總售價', '備註', '狀態', '建單人'
 ]
+
+CUSTOM_ITEMS = ["手鍊", "項鍊", "鑰匙圈"]
 
 CUSTOMER_COLUMNS = [
     '客戶名稱', '客戶電話', '手圍', '喜神', '忌神', '生日', '出生時間',
@@ -313,10 +315,11 @@ if page == "📝 建立訂單":
         customer_phone = c2.text_input("客戶電話",   value=prefill.get("客戶電話", ""))
 
         st.subheader("訂單資訊")
-        c3, c4, c5 = st.columns(3)
+        c3, c4, c5, c5b = st.columns(4)
         product_type  = c3.selectbox("商品種類", ["客製", "公版"])
-        order_creator = c4.selectbox("建單人",   ["Imeng", "千畇"])
-        total_price   = c5.number_input("總售價 ($)（可之後再填）", min_value=0.0, value=0.0)
+        custom_item   = c4.selectbox("客製品項", CUSTOM_ITEMS)
+        order_creator = c5.selectbox("建單人",   ["Imeng", "千畇"])
+        total_price   = c5b.number_input("總售價 ($)（可之後再填）", min_value=0.0, value=0.0)
 
         st.subheader("手鍊 & 出生資訊")
         b1, b2, b3 = st.columns(3)
@@ -347,6 +350,7 @@ if page == "📝 建立訂單":
                     "客戶名稱":  customer_name,
                     "客戶電話":  customer_phone,
                     "商品種類":  product_type,
+                    "客製品項":  custom_item,
                     "手圍":     wrist_size,
                     "生日":     birthday,
                     "出生時間": birth_time,
@@ -416,15 +420,18 @@ elif page == "📋 訂單列表":
             e_bday  = b2.text_input("生日（YYYY/MM/DD）", value=safe_get(edit_row, "生日"))
             e_btime = b3.text_input("出生時間（HH:MM）",  value=safe_get(edit_row, "出生時間"))
 
-            c3, c4, c5 = st.columns(3)
+            c3, c4, c5, c5b = st.columns(4)
             cur_type = safe_get(edit_row, "商品種類")
             e_type    = c3.selectbox("商品種類", ["客製","公版"],
                 index=["客製","公版"].index(cur_type) if cur_type in ["客製","公版"] else 0)
+            cur_item = safe_get(edit_row, "客製品項")
+            e_item    = c4.selectbox("客製品項", CUSTOM_ITEMS,
+                index=CUSTOM_ITEMS.index(cur_item) if cur_item in CUSTOM_ITEMS else 0)
             cur_creator = safe_get(edit_row, "建單人")
-            e_creator = c4.selectbox("建單人", ["Imeng","千畇"],
+            e_creator = c5.selectbox("建單人", ["Imeng","千畇"],
                 index=["Imeng","千畇"].index(cur_creator) if cur_creator in ["Imeng","千畇"] else 0)
             price_val = safe_get(edit_row, "總售價")
-            e_price   = c5.number_input("總售價 ($)", value=float(price_val) if price_val else 0.0)
+            e_price   = c5b.number_input("總售價 ($)", value=float(price_val) if price_val else 0.0)
 
             c6, c7 = st.columns(2)
             xi_val = safe_get(edit_row, "喜神")
@@ -446,6 +453,7 @@ elif page == "📋 訂單列表":
                 orders_df.loc[edit_idx, "生日"]     = str(e_bday)
                 orders_df.loc[edit_idx, "出生時間"] = str(e_btime)
                 orders_df.loc[edit_idx, "商品種類"] = str(e_type)
+                orders_df.loc[edit_idx, "客製品項"] = str(e_item)
                 orders_df.loc[edit_idx, "建單人"]   = str(e_creator)
                 orders_df.loc[edit_idx, "總售價"]   = str(e_price)
                 orders_df.loc[edit_idx, "喜神"]     = "、".join(e_xi)
@@ -489,6 +497,7 @@ elif page == "🔄 訂單管理":
                 st.write(
                     f"**電話：** {safe_get(sel_order,'客戶電話') or '-'} | "
                     f"**商品種類：** {safe_get(sel_order,'商品種類') or '-'} | "
+                    f"**客製品項：** {safe_get(sel_order,'客製品項') or '-'} | "
                     f"**手圍：** {safe_get(sel_order,'手圍') or '-'} | "
                     f"**出生時間：** {safe_get(sel_order,'出生時間') or '-'} | "
                     f"**建單人：** {safe_get(sel_order,'建單人') or '-'} | "
@@ -507,6 +516,14 @@ elif page == "🔄 訂單管理":
             st.divider()
             st.subheader("✏️ 修改訂單")
             with st.form("edit_order_form"):
+                ce0a, ce0b = st.columns(2)
+                cur_otype = safe_get(sel_order,"商品種類")
+                edit_type = ce0a.selectbox("商品種類", ["客製","公版"],
+                    index=["客製","公版"].index(cur_otype) if cur_otype in ["客製","公版"] else 0)
+                cur_oitem = safe_get(sel_order,"客製品項")
+                edit_item = ce0b.selectbox("客製品項", CUSTOM_ITEMS,
+                    index=CUSTOM_ITEMS.index(cur_oitem) if cur_oitem in CUSTOM_ITEMS else 0)
+
                 ce1, ce2, ce3, ce4 = st.columns(4)
                 edit_price = ce1.number_input("修改總售價 ($)",
                     value=float(safe_get(sel_order,"總售價")) if safe_get(sel_order,"總售價") else 0.0)
@@ -524,6 +541,8 @@ elif page == "🔄 訂單管理":
                 edit_ji = ce6.multiselect("忌神", WUXING_OPTS, default=cj)
 
                 if st.form_submit_button("💾 儲存修改"):
+                    orders_df.loc[sel_idx, "商品種類"] = str(edit_type)
+                    orders_df.loc[sel_idx, "客製品項"] = str(edit_item)
                     orders_df.loc[sel_idx, "總售價"]   = str(edit_price)
                     orders_df.loc[sel_idx, "手圍"]     = str(edit_wrist)
                     orders_df.loc[sel_idx, "生日"]     = str(edit_bday)
@@ -690,7 +709,6 @@ elif page == "👥 客戶管理":
             else:
                 st.info("ℹ️ 請填寫生日後，系統將自動計算三年流年與階段數。")
 
-            # 顯示收件資料摘要
             recv_type  = safe_get(cust_row, "收件類型")
             recv_addr  = safe_get(cust_row, "收件地址")
             recv_name  = safe_get(cust_row, "收件人姓名")
@@ -708,7 +726,6 @@ elif page == "👥 客戶管理":
                     if recv_addr:
                         st.write(f"**地址：** {recv_addr}")
 
-            # 顯示關係鏈結摘要
             my_rels = get_customer_relations(sel_cust, rel_df_mgmt)
             if not my_rels.empty:
                 st.markdown("#### 🔗 關係鏈結")
