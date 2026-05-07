@@ -23,8 +23,14 @@ CUSTOMER_COLUMNS = [
     '流年去年', '流年今年', '流年明年', '階段數'
 ]
 
-STATUS_FLOW = ["待確認", "已確認", "已出貨", "已完成", "已取消"]
-WUXING_OPTS = ["金", "木", "水", "火", "土"]
+STATUS_FLOW    = ["待確認", "已確認", "已出貨", "已完成", "已取消"]
+WUXING_OPTS    = ["金", "木", "水", "火", "土"]
+
+RELATIONSHIP_COLUMNS = ['客戶A', '關係類型', '客戶B', '備註', '建立時間']
+RELATION_TYPES = [
+    "👫 夫妻／伴侶", "👨‍👩‍👧 親子", "👫 兄弟姊妹",
+    "👯 朋友", "🤝 介紹人→被介紹", "💼 同事", "🔗 其他"
+]
 
 # ==========================================
 # § 2 數字學計算工具
@@ -154,12 +160,10 @@ def _save_sheet(tab, df):
         st.error(f"儲存 {tab} 失敗: {e}")
 
 def fill_numerology(df):
-    """根據每列的「生日」欄位，自動填入：流年去年/今年/明年/階段數"""
     df = df.copy()
     for col in ["流年去年", "流年今年", "流年明年", "階段數"]:
         if col not in df.columns:
             df[col] = ""
-
     for idx, row in df.iterrows():
         bday_str = str(row.get("生日", "")).strip()
         parsed = parse_birthday(bday_str)
@@ -174,10 +178,26 @@ def fill_numerology(df):
         df.loc[idx, "階段數"]   = calc_jieduan(by, bm)
     return df
 
-def load_orders():      return _load_sheet("Orders",    ORDER_COLUMNS)
-def save_orders(df):    _save_sheet("Orders",    fill_numerology(df))
-def load_customers():   return _load_sheet("Customers", CUSTOMER_COLUMNS)
-def save_customers(df): _save_sheet("Customers", fill_numerology(df))
+def load_orders():          return _load_sheet("Orders",        ORDER_COLUMNS)
+def save_orders(df):        _save_sheet("Orders",        fill_numerology(df))
+def load_customers():       return _load_sheet("Customers",     CUSTOMER_COLUMNS)
+def save_customers(df):     _save_sheet("Customers",     fill_numerology(df))
+def load_relationships():   return _load_sheet("Relationships", RELATIONSHIP_COLUMNS)
+def save_relationships(df): _save_sheet("Relationships", df)
+
+def get_customer_relations(name, rel_df):
+    if rel_df.empty or not name:
+        return pd.DataFrame(columns=["對象", "關係類型", "備註", "建立時間"])
+    rows = []
+    for _, r in rel_df.iterrows():
+        if r["客戶A"] == name:
+            rows.append({"對象": r["客戶B"], "關係類型": r["關係類型"],
+                         "備註": r["備註"], "建立時間": r["建立時間"]})
+        elif r["客戶B"] == name:
+            rows.append({"對象": r["客戶A"], "關係類型": r["關係類型"],
+                         "備註": r["備註"], "建立時間": r["建立時間"]})
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["對象", "關係類型", "備註", "建立時間"])
 
 def generate_order_id():
     return f"ORD-{datetime.now().strftime('%m%d%H%M%S')}"
@@ -192,13 +212,10 @@ def safe_get(row, col, default=""):
 def sync_customers_from_orders():
     orders_df    = load_orders()
     customers_df = load_customers()
-
     if orders_df.empty:
         return 0
-
     existing_names = set(customers_df["客戶名稱"].tolist())
     new_rows = []
-
     for name, group in orders_df.groupby("客戶名稱"):
         if not name or name in existing_names:
             continue
@@ -212,12 +229,9 @@ def sync_customers_from_orders():
             "生日":    safe_get(latest, "生日"),
             "出生時間": safe_get(latest, "出生時間"),
         })
-
     if new_rows:
-        customers_df = pd.concat(
-            [customers_df, pd.DataFrame(new_rows)], ignore_index=True)
+        customers_df = pd.concat([customers_df, pd.DataFrame(new_rows)], ignore_index=True)
         save_customers(customers_df)
-
     return len(new_rows)
 
 # ==========================================
@@ -235,6 +249,7 @@ with st.sidebar:
         "🔄 訂單管理",
         "📜 訂單紀錄",
         "👥 客戶管理",
+        "🔗 關係鏈結",
         "🔢 數字學計算",
     ])
     if st.button("🔄 刷新資料"):
@@ -328,14 +343,13 @@ if page == "📝 建立訂單":
                     "出生時間": birth_time,
                     "喜神":     "、".join(xi_shen),
                     "忌神":     "、".join(ji_shen),
-                    "流年去年": "", "流年今年": "", "流年明年": "", "階段數": "",
                     "總售價":   str(total_price),
                     "備註":     order_note,
                     "狀態":     "待確認",
                     "建單人":   order_creator,
                 }
                 orders_df = pd.concat([orders_df, pd.DataFrame([new_order])], ignore_index=True)
-                save_orders(orders_df)   # fill_numerology 在 save_orders 內自動執行
+                save_orders(orders_df)
                 st.success(f"✅ 訂單 {order_id} 已建立！")
                 time.sleep(1.5)
                 st.rerun()
@@ -462,7 +476,6 @@ elif page == "🔄 訂單管理":
                 price_v = safe_get(sel_order, "總售價")
                 c3.metric("總售價",  f"${float(price_v):,.2f}" if price_v else "$0")
                 c4.metric("目前狀態", safe_get(sel_order, "狀態"))
-
                 st.write(
                     f"**電話：** {safe_get(sel_order,'客戶電話') or '-'} | "
                     f"**商品種類：** {safe_get(sel_order,'商品種類') or '-'} | "
@@ -475,7 +488,6 @@ elif page == "🔄 訂單管理":
                     f"**忌神：** {safe_get(sel_order,'忌神') or '-'}")
                 if safe_get(sel_order, "備註"):
                     st.write(f"**備註：** {sel_order['備註']}")
-
                 bday_val = safe_get(sel_order, "生日")
                 if bday_val:
                     st.markdown("**📊 流年 × 階段數 三年對照表**")
@@ -564,7 +576,6 @@ elif page == "📜 訂單紀錄":
             c4.metric("已完成總營收", f"${rev:,.2f}")
         except:
             c4.metric("已完成總營收", "$0")
-
         st.divider()
         st.dataframe(orders_df.iloc[::-1], use_container_width=True)
 
@@ -625,6 +636,8 @@ elif page == "👥 客戶管理":
                     time.sleep(1.5); st.rerun()
 
     with tab2:
+        rel_df_mgmt = load_relationships()
+
         if customers_df.empty:
             st.info("尚未建立任何客戶資料。")
         else:
@@ -648,6 +661,12 @@ elif page == "👥 客戶管理":
                 render_numerology_table(bday_val)
             else:
                 st.info("ℹ️ 請填寫生日後，系統將自動計算三年流年與階段數。")
+
+            my_rels = get_customer_relations(sel_cust, rel_df_mgmt)
+            if not my_rels.empty:
+                st.markdown("#### 🔗 關係鏈結")
+                st.dataframe(my_rels[["對象","關係類型","備註"]], use_container_width=True, hide_index=True)
+                st.caption("完整管理請至「🔗 關係鏈結」頁面")
 
             with st.form("edit_customer_form"):
                 ec1, ec2 = st.columns(2)
@@ -690,7 +709,130 @@ elif page == "👥 客戶管理":
                     time.sleep(1); st.rerun()
 
 # ==========================================
-# § 10 數字學計算（獨立頁面）
+# § 10 關係鏈結
+# ==========================================
+elif page == "🔗 關係鏈結":
+    st.header("🔗 關係鏈結（Relationship Mapping）")
+
+    customers_df  = load_customers()
+    rel_df        = load_relationships()
+    cust_names    = customers_df["客戶名稱"].tolist() if not customers_df.empty else []
+
+    tab_view, tab_add, tab_all = st.tabs(["👤 查詢客戶關係", "➕ 新增關係", "📋 所有關係清單"])
+
+    with tab_view:
+        if not cust_names:
+            st.info("尚未建立任何客戶資料。")
+        else:
+            sel_name = st.selectbox("選擇客戶", cust_names, key="rel_view_sel")
+            my_rels  = get_customer_relations(sel_name, rel_df)
+
+            if not customers_df.empty:
+                crow = customers_df[customers_df["客戶名稱"] == sel_name]
+                if not crow.empty:
+                    c = crow.iloc[0]
+                    with st.container(border=True):
+                        col1, col2, col3, col4 = st.columns(4)
+                        col1.write(f"**📞** {safe_get(c,'客戶電話') or '-'}")
+                        col2.write(f"**手圍：** {safe_get(c,'手圍') or '-'}")
+                        col3.write(f"**喜神：** {safe_get(c,'喜神') or '-'}")
+                        col4.write(f"**忌神：** {safe_get(c,'忌神') or '-'}")
+                        bday = safe_get(c, "生日")
+                        if bday:
+                            st.caption(f"🎂 {bday}　流年今年：{safe_get(c,'流年今年') or '-'}　階段數：{safe_get(c,'階段數') or '-'}")
+
+            st.subheader(f"🔗 {sel_name} 的所有關係")
+            if my_rels.empty:
+                st.info("此客戶目前沒有任何關係鏈結。")
+            else:
+                st.dataframe(my_rels, use_container_width=True, hide_index=True)
+                st.caption(f"共 {len(my_rels)} 條關係")
+
+                st.divider()
+                st.subheader("📊 關聯客戶數字學對照")
+                for _, rel_row in my_rels.iterrows():
+                    target = rel_row["對象"]
+                    tcrow  = customers_df[customers_df["客戶名稱"] == target]
+                    with st.expander(f"{rel_row['關係類型']} ▸ **{target}**"):
+                        if not tcrow.empty:
+                            tc = tcrow.iloc[0]
+                            col1, col2 = st.columns(2)
+                            col1.write(f"**電話：** {safe_get(tc,'客戶電話') or '-'}")
+                            col2.write(f"**手圍：** {safe_get(tc,'手圍') or '-'}")
+                            tbday = safe_get(tc, "生日")
+                            if tbday:
+                                render_numerology_table(tbday)
+                            else:
+                                st.caption("此客戶尚無生日資料")
+                        else:
+                            st.caption("此關聯客戶不在客戶資料庫中")
+
+                st.divider()
+                st.subheader("🗑️ 刪除關係")
+                del_opts = [f"{r['對象']}（{r['關係類型']}）" for _, r in my_rels.iterrows()]
+                del_sel = st.selectbox("選擇要刪除的關係", del_opts, key="rel_del_sel")
+                if st.button("🗑️ 確認刪除", type="secondary"):
+                    del_target = del_sel.split("（")[0]
+                    rel_df = rel_df[~(
+                        ((rel_df["客戶A"] == sel_name) & (rel_df["客戶B"] == del_target)) |
+                        ((rel_df["客戶A"] == del_target) & (rel_df["客戶B"] == sel_name))
+                    )].reset_index(drop=True)
+                    save_relationships(rel_df)
+                    st.success(f"✅ 已刪除與「{del_target}」的關係")
+                    time.sleep(1); st.rerun()
+
+    with tab_add:
+        if len(cust_names) < 2:
+            st.info("至少需要 2 位客戶才能建立關係。")
+        else:
+            st.subheader("新增客戶關係")
+            with st.form("add_relation_form"):
+                col1, col2 = st.columns(2)
+                cust_a = col1.selectbox("客戶 A", cust_names, key="rel_a")
+                cust_b = col2.selectbox("客戶 B", cust_names, key="rel_b")
+
+                rel_type = st.selectbox("關係類型", RELATION_TYPES)
+                rel_note = st.text_input("備註（選填）", placeholder="例：同年入會、朋友介紹")
+
+                if st.form_submit_button("✅ 建立關係", use_container_width=True):
+                    if cust_a == cust_b:
+                        st.error("❌ 不能將同一位客戶與自己連結")
+                    else:
+                        dup = rel_df[
+                            ((rel_df["客戶A"] == cust_a) & (rel_df["客戶B"] == cust_b)) |
+                            ((rel_df["客戶A"] == cust_b) & (rel_df["客戶B"] == cust_a))
+                        ]
+                        if not dup.empty:
+                            st.warning("⚠️ 此兩位客戶之間已有關係鏈結，請至清單修改")
+                        else:
+                            new_rel = {
+                                "客戶A": cust_a, "關係類型": rel_type,
+                                "客戶B": cust_b, "備註": rel_note,
+                                "建立時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            }
+                            rel_df = pd.concat([rel_df, pd.DataFrame([new_rel])], ignore_index=True)
+                            save_relationships(rel_df)
+                            st.success(f"✅ 已建立：{cust_a} ⟷ {cust_b}（{rel_type}）")
+                            time.sleep(1.5); st.rerun()
+
+    with tab_all:
+        st.subheader("所有關係清單")
+        if rel_df.empty:
+            st.info("目前沒有任何關係鏈結。")
+        else:
+            search_r = st.text_input("搜尋客戶名稱", key="rel_search_all")
+            view_rel = rel_df.copy()
+            if search_r:
+                mask = (
+                    view_rel["客戶A"].str.contains(search_r, case=False, na=False) |
+                    view_rel["客戶B"].str.contains(search_r, case=False, na=False)
+                )
+                view_rel = view_rel[mask]
+            st.dataframe(view_rel, use_container_width=True, hide_index=True)
+            st.caption(f"共 {len(rel_df)} 條關係鏈結")
+
+# ==========================================
+# § 11 數字學計算（獨立頁面）
 # ==========================================
 elif page == "🔢 數字學計算":
     st.header("🔢 數字學計算器")
