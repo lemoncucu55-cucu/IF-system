@@ -290,13 +290,19 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    if st.button("🔃 同步訂單→客戶資料", use_container_width=True,
+        if st.button("🔃 同步訂單→客戶資料", use_container_width=True,
                  help="將訂單中尚未建檔的客戶自動加入客戶資料表"):
         added = sync_customers_from_orders()
         if added:
             st.success(f"✅ 已新增 {added} 位客戶")
         else:
             st.info("客戶資料已是最新，無需同步")
+
+    if st.button("🔁 更新所有訂單狀態欄位", use_container_width=True,
+                 help="將付款狀態、出貨狀態欄位同步到 Google Sheets"):
+        df = load_orders()
+        save_orders(df)
+        st.success("✅ 所有訂單狀態欄位已更新！")
 
 # ==========================================
 # § 5 建立訂單
