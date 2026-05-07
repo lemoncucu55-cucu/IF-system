@@ -554,9 +554,26 @@ elif page == "🔄 訂單管理":
                     st.success("✅ 訂單已更新！")
                     time.sleep(1); st.rerun()
 
-            st.divider()
+                        st.divider()
             st.subheader("📌 變更狀態")
             cur_status = safe_get(sel_order, "狀態")
+
+            # 進度條顯示
+            status_steps = ["待確認", "已確認", "已付款", "已出貨", "已完成"]
+            if cur_status in status_steps:
+                step_idx = status_steps.index(cur_status)
+                cols = st.columns(len(status_steps))
+                for i, (col, step) in enumerate(zip(cols, status_steps)):
+                    if i < step_idx:
+                        col.markdown(f"<div style='text-align:center;color:gray'>✅<br><small>{step}</small></div>", unsafe_allow_html=True)
+                    elif i == step_idx:
+                        col.markdown(f"<div style='text-align:center;color:#ff6b35;font-weight:bold'>▶ {step}</div>", unsafe_allow_html=True)
+                    else:
+                        col.markdown(f"<div style='text-align:center;color:lightgray'>○<br><small>{step}</small></div>", unsafe_allow_html=True)
+            elif cur_status == "已取消":
+                st.error("❌ 此訂單已取消")
+
+            st.divider()
 
             if cur_status == "待確認":
                 ca, cb = st.columns(2)
@@ -570,6 +587,17 @@ elif page == "🔄 訂單管理":
                     time.sleep(1.5); st.rerun()
 
             elif cur_status == "已確認":
+                ca, cb = st.columns(2)
+                if ca.button("💰 確認已付款", type="primary", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已付款"
+                    save_orders(orders_df); st.success(f"✅ {order_id} 已付款！")
+                    time.sleep(1.5); st.rerun()
+                if cb.button("❌ 取消訂單", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已取消"
+                    save_orders(orders_df); st.warning(f"{order_id} 已取消。")
+                    time.sleep(1.5); st.rerun()
+
+            elif cur_status == "已付款":
                 ca, cb = st.columns(2)
                 if ca.button("📦 標記為已出貨", type="primary", use_container_width=True):
                     orders_df.loc[sel_idx,"狀態"] = "已出貨"
