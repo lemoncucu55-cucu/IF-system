@@ -516,6 +516,15 @@ elif page == "🔄 訂單管理":
             st.divider()
             st.subheader("✏️ 修改訂單")
             with st.form("edit_order_form"):
+                # 手動修改狀態
+                cur_s = safe_get(sel_order, "狀態")
+                all_statuses = ["待確認", "已確認", "已付款", "已出貨", "已付款已出貨", "已完成", "已取消"]
+                new_status_sel = st.selectbox(
+                    "📌 手動修改狀態",
+                    all_statuses,
+                    index=all_statuses.index(cur_s) if cur_s in all_statuses else 0
+                )
+                st.divider()
                 ce0a, ce0b = st.columns(2)
                 cur_otype = safe_get(sel_order,"商品種類")
                 edit_type = ce0a.selectbox("商品種類", ["客製","公版"],
@@ -541,6 +550,7 @@ elif page == "🔄 訂單管理":
                 edit_ji = ce6.multiselect("忌神", WUXING_OPTS, default=cj)
 
                 if st.form_submit_button("💾 儲存修改"):
+                    orders_df.loc[sel_idx, "狀態"]     = str(new_status_sel)
                     orders_df.loc[sel_idx, "商品種類"] = str(edit_type)
                     orders_df.loc[sel_idx, "客製品項"] = str(edit_item)
                     orders_df.loc[sel_idx, "總售價"]   = str(edit_price)
