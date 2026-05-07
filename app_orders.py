@@ -15,7 +15,7 @@ ORDER_COLUMNS = [
     '訂單編號', '建立時間', '客戶名稱', '客戶電話', '商品種類', '客製品項',
     '手圍', '生日', '出生時間', '喜神', '忌神',
     '流年去年', '流年今年', '流年明年', '階段數',
-    '總售價', '備註', '狀態', '建單人'
+    '總售價', '備註', '狀態', '付款狀態', '出貨狀態', '建單人'
 ]
 
 CUSTOM_ITEMS = ["手鍊", "項鍊", "鑰匙圈"]
@@ -183,8 +183,30 @@ def fill_numerology(df):
         df.loc[idx, "階段數"]   = calc_jieduan(by, bm)
     return df
 
+def fill_order_substatus(df):
+    """根據「狀態」欄位自動填入付款狀態 / 出貨狀態"""
+    df = df.copy()
+    for col in ["付款狀態", "出貨狀態"]:
+        if col not in df.columns:
+            df[col] = ""
+    status_map = {
+        "待確認":      ("未付款", "未出貨"),
+        "已確認":      ("未付款", "未出貨"),
+        "已付款":      ("已付款", "未出貨"),
+        "已出貨":      ("未付款", "已出貨"),
+        "已付款已出貨": ("已付款", "已出貨"),
+        "已完成":      ("已付款", "已出貨"),
+        "已取消":      ("—",    "—"),
+    }
+    for idx, row in df.iterrows():
+        s = str(row.get("狀態", "")).strip()
+        pay, ship = status_map.get(s, ("", ""))
+        df.loc[idx, "付款狀態"] = pay
+        df.loc[idx, "出貨狀態"] = ship
+    return df
+
 def load_orders():          return _load_sheet("Orders",        ORDER_COLUMNS)
-def save_orders(df):        _save_sheet("Orders",        fill_numerology(df))
+def save_orders(df):        _save_sheet("Orders", fill_order_substatus(fill_numerology(df)))
 def load_customers():       return _load_sheet("Customers",     CUSTOMER_COLUMNS)
 def save_customers(df):     _save_sheet("Customers",     fill_numerology(df))
 def load_relationships():   return _load_sheet("Relationships", RELATIONSHIP_COLUMNS)
