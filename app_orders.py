@@ -290,8 +290,8 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-        if st.button("🔃 同步訂單→客戶資料", use_container_width=True,
-                 help="將訂單中尚未建檔的客戶自動加入客戶資料表"):
+    if st.button("🔃 同步訂單→客戶資料", use_container_width=True,
+                help="將訂單中尚未建檔的客戶自動加入客戶資料表"):
         added = sync_customers_from_orders()
         if added:
             st.success(f"✅ 已新增 {added} 位客戶")
