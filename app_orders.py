@@ -153,7 +153,7 @@ def parse_birthday(bday_str):
     return None
 
 def render_numerology_table(bday_str, btime_str=""):
-    """根據生日（與出生時間）顯示流年表 + 五階段數，成功回傳 True"""
+    """根據生日（與出生時間）顯示五階段數 + 流年表，成功回傳 True"""
     parsed = parse_birthday(bday_str)
     if not parsed:
         st.warning("⚠️ 生日格式錯誤，請使用 YYYY/MM/DD（例：2000/10/10）")
@@ -161,38 +161,79 @@ def render_numerology_table(bday_str, btime_str=""):
 
     by, bm, bd = parsed
     birth_hour, birth_minute = parse_birth_time(btime_str)
-    age          = calc_age(by, bm, bd)
-    cur_stage    = get_life_stage(age)
-    stage_icon   = {"幼年": "🍼", "少年": "🌱", "青年": "🔥", "中年": "🌳", "老年": "🌙"}
+    age       = calc_age(by, bm, bd)
+    cur_stage = get_life_stage(age)
 
-    # ── 目前階段提示 ──
-    jd_cur, _, jd_label = calc_jieduan(by, bm, bd, birth_hour, birth_minute, age)
-    st.info(
-        f"{stage_icon.get(cur_stage,'📍')} 目前階段：**{cur_stage}**（{age} 歲）｜"
-        f"階段數公式：{jd_label}｜**階段數 = {jd_cur.split('/')[-1]}**"
-    )
-
-    # ── 五階段數對照表 ──
-    stage_defs = [
-        ("幼年",  0,  10, "年＋月＋日＋時＋分"),
-        ("少年", 11,  20, "年＋月＋日＋時"),
-        ("青年", 21,  40, "年＋月＋日"),
-        ("中年", 41,  60, "年＋月"),
-        ("老年", 61, 999, "年"),
+    # ── 五階段卡片（左→右：老年 中年 青年 少年 幼年）──
+    stage_configs = [
+        ("老年", "61 歲以上", 70,  True,  True,  True),
+        ("中年", "41 – 60 歲", 50, True,  True,  True),
+        ("青年", "21 – 40 歲", 30, True,  True,  True),
+        ("少年", "11 – 20 歲", 15, True,  True,  False),
+        ("幼年", "0 – 10 歲",   5, True,  False, False),
     ]
-    stage_rows = []
-    for sname, s_min, s_max, formula in stage_defs:
-        # 用該階段中間年齡來代入計算
-        mid_age = (s_min + min(s_max, 99)) // 2
-        res, _, lbl = calc_jieduan(by, bm, bd, birth_hour, birth_minute, mid_age)
+    # 欄位說明：(階段名, 年齡文字, 代表年齡, 需要日, 需要時, 需要分)
+
+    cols = st.columns(5)
+    for col, (sname, age_label, mid_age, need_day, need_hour, need_min) in zip(cols, stage_configs):
+        # 判斷資料是否齊全
+        has_data = True
+        if need_hour and birth_hour is None:
+            has_data = False
+        if need_min and birth_minute is None:
+            has_data = False
+
+        if has_data:
+            res, _, _ = calc_jieduan(by, bm, bd, birth_hour, birth_minute, mid_age)
+            display = res  # 例如 "36/9"
+        else:
+            display = "—"
+
         is_cur = (sname == cur_stage)
-        stage_rows.append({
-            "階段":   f"{stage_icon[sname]} {sname}（{s_min}–{'61+' if s_max==999 else s_max} 歲）{'  ◀ 目前' if is_cur else ''}",
-            "公式":   formula,
-            "計算":   lbl,
-            "階段數": res.split("/")[-1],
+
+        # 目前階段用深藍底色，其他用淺藍
+        bg    = "#1a3a8f" if is_cur else "#e8eef7"
+        color = "#ffffff" if is_cur else "#1a3a8f"
+        border = "2px solid #1a3a8f" if is_cur else "2px solid transparent"
+        title_color = "#1a3a8f" if is_cur else "#333333"
+        cur_label = " ◀ 目前" if is_cur else ""
+
+        with col:
+            st.markdown(
+                f"<div style='text-align:center; font-weight:bold; color:{title_color}; margin-bottom:8px;'>"
+                f"{sname}階段{cur_label}</div>",
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                f"<div style='background:{bg}; border:{border}; border-radius:12px; "
+                f"padding:18px 8px; text-align:center; margin-bottom:8px;'>"
+                f"<span style='font-size:24px; font-weight:bold; color:{color};'>{display}</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                f"<div style='text-align:center; color:#888; font-size:13px;'>{age_label}</div>",
+                unsafe_allow_html=True
+            )
+
+    st.divider()
+
+    # ── 流年三年對照表 ──
+    st.caption("📅 流年三年對照")
+    cur_res, _, _ = calc_jieduan(by, bm, bd, birth_hour, birth_minute, age)
+    years  = personal_year_range(bm, bd)
+    labels = ["去年", "今年", "明年"]
+    rows   = []
+    for yr, lbl in zip(years, labels):
+        ln = calc_liunian(yr, bm, bd)
+        rows.append({
+            "年份":     f"{yr}（{lbl}）",
+            "流年計算": f"{yr}年 + {bm}月 + {bd}日 → {ln}",
+            "流年數":   ln.split("/")[-1],
+            "當前階段數": cur_res.split("/")[-1],
         })
-    st.dataframe(pd.DataFrame(stage_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    return True
 
     st.divider()
 
