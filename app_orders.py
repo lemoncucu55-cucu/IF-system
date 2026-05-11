@@ -66,11 +66,11 @@ def calc_age(birth_year, birth_month, birth_day, today=None):
 
 def get_life_stage(age):
     """根據年齡回傳人生階段名稱"""
-    if age <= 9:
+    if age <= 10:
         return "幼年"
-    elif age <= 19:
+    elif age <= 20:
         return "少年"
-    elif age <= 39:
+    elif age <= 40:
         return "青年"
     elif age <= 60:
         return "中年"
@@ -628,6 +628,7 @@ elif page == "🔄 訂單管理":
                     f"**商品種類：** {safe_get(sel_order,'商品種類') or '-'} | "
                     f"**客製品項：** {safe_get(sel_order,'客製品項') or '-'} | "
                     f"**手圍：** {safe_get(sel_order,'手圍') or '-'} | "
+                    f"**生日：** {safe_get(sel_order,'生日') or '-'} | "
                     f"**出生時間：** {safe_get(sel_order,'出生時間') or '-'} | "
                     f"**建單人：** {safe_get(sel_order,'建單人') or '-'} | "
                     f"**建立時間：** {safe_get(sel_order,'建立時間') or '-'}")
