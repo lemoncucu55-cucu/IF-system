@@ -27,7 +27,6 @@ CUSTOMER_COLUMNS = [
 ]
 
 DELIVERY_TYPES = ["🏠 住家", "🏪 超商"]
-
 STATUS_FLOW    = ["待確認", "已確認", "已出貨", "已完成", "已取消"]
 WUXING_OPTS    = ["金", "木", "水", "火", "土"]
 
@@ -44,7 +43,6 @@ def _digit_sum(n):
     return sum(int(d) for d in str(n))
 
 def _reduce_chain(n):
-    """持續縮減到個位，回傳過程列表，例如 19 → [19, 10, 1]"""
     chain = [n]
     while n >= 10:
         n = _digit_sum(n)
@@ -57,11 +55,84 @@ def calc_liunian(year, birth_month, birth_day):
     chain = _reduce_chain(total)
     return "/".join(str(x) for x in chain)
 
-def calc_jieduan(birth_year, birth_month):
-    digits_str = str(birth_year) + str(birth_month)
+def calc_age(birth_year, birth_month, birth_day, today=None):
+    """計算目前實際年齡"""
+    if today is None:
+        today = datetime.now().date()
+    age = today.year - birth_year
+    if (today.month, today.day) < (birth_month, birth_day):
+        age -= 1
+    return age
+
+def get_life_stage(age):
+    """根據年齡回傳人生階段名稱"""
+    if age <= 9:
+        return "幼年"
+    elif age <= 19:
+        return "少年"
+    elif age <= 39:
+        return "青年"
+    elif age <= 60:
+        return "中年"
+    else:
+        return "老年"
+
+def parse_birth_time(btime_str):
+    """解析出生時間字串（HH:MM），回傳 (hour, minute) 或 (None, None)"""
+    if not btime_str or not str(btime_str).strip():
+        return None, None
+    try:
+        parts = str(btime_str).strip().split(":")
+        hour   = int(parts[0]) if len(parts) > 0 else None
+        minute = int(parts[1]) if len(parts) > 1 else None
+        return hour, minute
+    except Exception:
+        return None, None
+
+def calc_jieduan(birth_year, birth_month, birth_day=None,
+                 birth_hour=None, birth_minute=None, age=None):
+    """
+    依人生階段計算階段數：
+      老年（60+）    → 年
+      中年（40–60）  → 年 + 月
+      青年（20–39）  → 年 + 月 + 日
+      少年（10–19）  → 年 + 月 + 日 + 時
+      幼年（0–9）    → 年 + 月 + 日 + 時 + 分
+    回傳 (結果字串, 階段名稱, 計算說明)
+    """
+    if age is None:
+        if birth_day:
+            age = calc_age(birth_year, birth_month, birth_day)
+        else:
+            age = 30  # 無法判斷時預設青年
+
+    stage = get_life_stage(age)
+
+    digits_str = str(birth_year)
+    label_parts = [f"年({birth_year})"]
+
+    if stage in ["幼年", "少年", "青年", "中年"]:
+        digits_str += str(birth_month)
+        label_parts.append(f"月({birth_month})")
+
+    if stage in ["幼年", "少年", "青年"] and birth_day is not None:
+        digits_str += str(birth_day)
+        label_parts.append(f"日({birth_day})")
+
+    if stage in ["幼年", "少年"] and birth_hour is not None:
+        digits_str += str(birth_hour)
+        label_parts.append(f"時({birth_hour})")
+
+    if stage == "幼年" and birth_minute is not None:
+        digits_str += str(birth_minute)
+        label_parts.append(f"分({birth_minute})")
+
     total = sum(int(d) for d in digits_str)
     chain = _reduce_chain(total)
-    return "/".join(str(x) for x in chain)
+    result = "/".join(str(x) for x in chain)
+    label  = " + ".join(label_parts) + f" → {result}"
+
+    return result, stage, label
 
 def personal_year_range(birth_month, birth_day, today=None):
     if today is None:
@@ -81,27 +152,41 @@ def parse_birthday(bday_str):
             pass
     return None
 
-def render_numerology_table(bday_str):
+def render_numerology_table(bday_str, btime_str=""):
+    """根據生日（與出生時間）顯示流年表 + 階段數，成功回傳 True"""
     parsed = parse_birthday(bday_str)
     if not parsed:
         st.warning("⚠️ 生日格式錯誤，請使用 YYYY/MM/DD（例：2000/10/10）")
         return False
+
     by, bm, bd = parsed
+    birth_hour, birth_minute = parse_birth_time(btime_str)
+    age   = calc_age(by, bm, bd)
+    stage = get_life_stage(age)
+
+    jd_result, jd_stage, jd_label = calc_jieduan(
+        by, bm, bd, birth_hour, birth_minute, age)
+    jd_final = jd_result.split("/")[-1]
+
+    # ── 階段資訊提示 ──
+    stage_icon = {"幼年": "🍼", "少年": "🌱", "青年": "🔥", "中年": "🌳", "老年": "🌙"}
+    st.info(
+        f"{stage_icon.get(stage,'📍')} **{stage}**（{age} 歲）｜"
+        f"階段數公式：{jd_label}｜**階段數 = {jd_final}**"
+    )
+
+    # ── 流年三年對照表 ──
     years  = personal_year_range(bm, bd)
     labels = ["去年", "今年", "明年"]
-    jieduan = calc_jieduan(by, bm)
-    jd_final = jieduan.split("/")[-1]
-
     rows = []
     for yr, lbl in zip(years, labels):
         ln = calc_liunian(yr, bm, bd)
         ln_final = ln.split("/")[-1]
         rows.append({
-            "年份":      f"{yr}（{lbl}）",
-            "流年計算":  f"{yr}年 + {bm}月 + {bd}日 → {ln}",
-            "流年數":    ln_final,
-            "階段數計算": f"{by}年 + {bm}月 → {jieduan}",
-            "階段數":    jd_final,
+            "年份":     f"{yr}（{lbl}）",
+            "流年計算": f"{yr}年 + {bm}月 + {bd}日 → {ln}",
+            "流年數":   ln_final,
+            "階段數":   jd_final,
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     return True
@@ -166,22 +251,30 @@ def _save_sheet(tab, df):
         st.error(f"儲存 {tab} 失敗: {e}")
 
 def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
+    """根據生日與出生時間，自動填入流年去年/今年/明年 + 階段數"""
     df = df.copy()
     for col in ["流年去年", "流年今年", "流年明年", "階段數"]:
         if col not in df.columns:
             df[col] = ""
+
     for idx, row in df.iterrows():
-        bday_str = str(row.get("生日", "")).strip()
+        bday_str  = str(row.get("生日", "")).strip()
+        btime_str = str(row.get("出生時間", "")).strip()
         parsed = parse_birthday(bday_str)
         if not parsed:
             df.loc[idx, ["流年去年", "流年今年", "流年明年", "階段數"]] = ""
             continue
         by, bm, bd = parsed
+        birth_hour, birth_minute = parse_birth_time(btime_str)
+        age = calc_age(by, bm, bd)
+
         years = personal_year_range(bm, bd)
         df.loc[idx, "流年去年"] = calc_liunian(years[0], bm, bd)
         df.loc[idx, "流年今年"] = calc_liunian(years[1], bm, bd)
         df.loc[idx, "流年明年"] = calc_liunian(years[2], bm, bd)
-        df.loc[idx, "階段數"]   = calc_jieduan(by, bm)
+
+        jd_result, _, _ = calc_jieduan(by, bm, bd, birth_hour, birth_minute, age)
+        df.loc[idx, "階段數"] = jd_result
     return df
 
 def load_orders():          return _load_sheet("Orders",        ORDER_COLUMNS)
@@ -296,7 +389,7 @@ with st.sidebar:
 if page == "📝 建立訂單":
     st.header("📝 建立新訂單")
 
-    customers_df = load_customers()
+    customers_df  = load_customers()
     customer_list = customers_df["客戶名稱"].tolist() if not customers_df.empty else []
 
     st.subheader("👤 客戶選擇")
@@ -306,11 +399,12 @@ if page == "📝 建立訂單":
     if use_existing and customer_list:
         sel_customer = st.selectbox("選擇客戶", ["── 請選擇 ──"] + customer_list)
         if sel_customer != "── 請選擇 ──":
-            prefill = customers_df[customers_df["客戶名稱"] == sel_customer].iloc[0].to_dict()
-            bday_str = str(prefill.get("生日", "")).strip()
+            prefill   = customers_df[customers_df["客戶名稱"] == sel_customer].iloc[0].to_dict()
+            bday_str  = str(prefill.get("生日", "")).strip()
+            btime_str = str(prefill.get("出生時間", "")).strip()
             if bday_str:
                 st.markdown("#### 📊 流年 × 階段數 三年對照表")
-                render_numerology_table(bday_str)
+                render_numerology_table(bday_str, btime_str)
             else:
                 with st.container(border=True):
                     ci1, ci2, ci3, ci4 = st.columns(4)
@@ -337,11 +431,11 @@ if page == "📝 建立訂單":
 
         st.subheader("手鍊 & 出生資訊")
         b1, b2, b3 = st.columns(3)
-        wrist_size  = b1.text_input("手圍",                 value=prefill.get("手圍", ""))
-        birthday    = b2.text_input("生日（YYYY/MM/DD）",   value=prefill.get("生日", ""),
-                                    placeholder="例：2000/10/10")
-        birth_time  = b3.text_input("出生時間（HH:MM）",   value=prefill.get("出生時間", ""),
-                                    placeholder="例：08:30")
+        wrist_size = b1.text_input("手圍",               value=prefill.get("手圍", ""))
+        birthday   = b2.text_input("生日（YYYY/MM/DD）", value=prefill.get("生日", ""),
+                                   placeholder="例：2000/10/10")
+        birth_time = b3.text_input("出生時間（HH:MM）",  value=prefill.get("出生時間", ""),
+                                   placeholder="例：08:30")
 
         st.subheader("五行")
         default_xi = [x for x in str(prefill.get("喜神","")).split("、") if x in WUXING_OPTS]
@@ -417,10 +511,11 @@ elif page == "📋 訂單列表":
 
         with st.container(border=True):
             st.write(f"**客戶：** {edit_row['客戶名稱']} | **狀態：** {edit_row['狀態']} | **建立時間：** {edit_row['建立時間']}")
-            bday_val = safe_get(edit_row, "生日")
+            bday_val  = safe_get(edit_row, "生日")
+            btime_val = safe_get(edit_row, "出生時間")
             if bday_val:
                 st.markdown("**📊 流年 × 階段數 三年對照表**")
-                render_numerology_table(bday_val)
+                render_numerology_table(bday_val, btime_val)
             else:
                 st.caption("ℹ️ 此訂單無生日資料，無法顯示流年計算。")
 
@@ -542,10 +637,11 @@ elif page == "🔄 訂單管理":
                 if safe_get(sel_order, "備註"):
                     st.write(f"**備註：** {sel_order['備註']}")
 
-                bday_val = safe_get(sel_order, "生日")
+                bday_val  = safe_get(sel_order, "生日")
+                btime_val = safe_get(sel_order, "出生時間")
                 if bday_val:
                     st.markdown("**📊 流年 × 階段數 三年對照表**")
-                    render_numerology_table(bday_val)
+                    render_numerology_table(bday_val, btime_val)
 
             st.divider()
             st.subheader("✏️ 修改訂單")
@@ -675,7 +771,7 @@ elif page == "👥 客戶管理":
 
             a3, a4, a5 = st.columns(3)
             new_wrist = a3.text_input("手圍")
-            new_bday  = a4.text_input("生日（YYYY/MM/DD）",  placeholder="例：2000/10/10")
+            new_bday  = a4.text_input("生日（YYYY/MM/DD）", placeholder="例：2000/10/10")
             new_btime = a5.text_input("出生時間（HH:MM）",  placeholder="例：08:30")
 
             a6, a7 = st.columns(2)
@@ -692,7 +788,7 @@ elif page == "👥 客戶管理":
             if new_delivery_type == "🏪 超商":
                 d3, d4 = st.columns(2)
                 new_recv_addr  = d3.text_input("超商地址（選填）", placeholder="例：台北市信義區")
-                new_store_name = d4.text_input("超商名稱／門市", placeholder="例：7-11 台北信義門市")
+                new_store_name = d4.text_input("超商名稱／門市",  placeholder="例：7-11 台北信義門市")
             else:
                 new_recv_addr  = st.text_input("收件地址", placeholder="例：台北市信義區信義路五段7號")
                 new_store_name = ""
@@ -742,10 +838,11 @@ elif page == "👥 客戶管理":
             cust_idx = customers_df[customers_df["客戶名稱"] == sel_cust].index[0]
             cust_row = customers_df.loc[cust_idx]
 
-            bday_val = safe_get(cust_row, "生日")
+            bday_val  = safe_get(cust_row, "生日")
+            btime_val = safe_get(cust_row, "出生時間")
             if bday_val:
                 st.markdown("#### 📊 流年 × 階段數 三年對照表（自動計算）")
-                render_numerology_table(bday_val)
+                render_numerology_table(bday_val, btime_val)
             else:
                 st.info("ℹ️ 請填寫生日後，系統將自動計算三年流年與階段數。")
 
@@ -803,7 +900,7 @@ elif page == "👥 客戶管理":
                 if ec_delivery_type == "🏪 超商":
                     ed3, ed4 = st.columns(2)
                     ec_recv_addr  = ed3.text_input("超商地址（選填）", value=safe_get(cust_row,"收件地址"))
-                    ec_store_name = ed4.text_input("超商名稱／門市", value=safe_get(cust_row,"超商名稱門市"))
+                    ec_store_name = ed4.text_input("超商名稱／門市",   value=safe_get(cust_row,"超商名稱門市"))
                 else:
                     ec_recv_addr  = st.text_input("收件地址", value=safe_get(cust_row,"收件地址"))
                     ec_store_name = ""
@@ -886,9 +983,10 @@ elif page == "🔗 關係鏈結":
                             col1, col2 = st.columns(2)
                             col1.write(f"**電話：** {safe_get(tc,'客戶電話') or '-'}")
                             col2.write(f"**手圍：** {safe_get(tc,'手圍') or '-'}")
-                            tbday = safe_get(tc, "生日")
+                            tbday  = safe_get(tc, "生日")
+                            tbtime = safe_get(tc, "出生時間")
                             if tbday:
-                                render_numerology_table(tbday)
+                                render_numerology_table(tbday, tbtime)
                             else:
                                 st.caption("此客戶尚無生日資料")
                         else:
@@ -896,11 +994,8 @@ elif page == "🔗 關係鏈結":
 
                 st.divider()
                 st.subheader("🗑️ 刪除關係")
-                del_opts = [
-                    f"{r['對象']}（{r['關係類型']}）"
-                    for _, r in my_rels.iterrows()
-                ]
-                del_sel = st.selectbox("選擇要刪除的關係", del_opts, key="rel_del_sel")
+                del_opts = [f"{r['對象']}（{r['關係類型']}）" for _, r in my_rels.iterrows()]
+                del_sel  = st.selectbox("選擇要刪除的關係", del_opts, key="rel_del_sel")
                 if st.button("🗑️ 確認刪除", type="secondary"):
                     del_target = del_sel.split("（")[0]
                     rel_df = rel_df[~(
@@ -920,7 +1015,6 @@ elif page == "🔗 關係鏈結":
                 col1, col2 = st.columns(2)
                 cust_a = col1.selectbox("客戶 A", cust_names, key="rel_a")
                 cust_b = col2.selectbox("客戶 B", cust_names, key="rel_b")
-
                 rel_type = st.selectbox("關係類型", RELATION_TYPES)
                 rel_note = st.text_input("備註（選填）", placeholder="例：同年入會、朋友介紹")
 
@@ -984,10 +1078,11 @@ elif page == "🔢 數字學計算":
             if not customers_df.empty:
                 st.divider()
                 st.caption("或從現有客戶帶入生日：")
-                quick_sel = st.selectbox("快速選擇客戶", ["── 手動輸入 ──"] + customers_df["客戶名稱"].tolist())
+                quick_sel = st.selectbox("快速選擇客戶",
+                    ["── 手動輸入 ──"] + customers_df["客戶名稱"].tolist())
                 if quick_sel != "── 手動輸入 ──":
                     row = customers_df[customers_df["客戶名稱"] == quick_sel].iloc[0]
-                    input_bday  = safe_get(row, "生日")  or input_bday
+                    input_bday  = safe_get(row, "生日")     or input_bday
                     input_btime = safe_get(row, "出生時間") or input_btime
                     st.info(f"已帶入：{quick_sel}（{input_bday}）")
 
@@ -996,44 +1091,38 @@ elif page == "🔢 數字學計算":
             parsed = parse_birthday(input_bday)
             if parsed:
                 by, bm, bd = parsed
+                birth_hour, birth_minute = parse_birth_time(input_btime)
+                age   = calc_age(by, bm, bd)
+                stage = get_life_stage(age)
                 years  = personal_year_range(bm, bd)
                 labels = ["去年", "今年", "明年"]
                 today  = datetime.now().date()
 
-                passed = (today.month, today.day) >= (bm, bd)
+                passed    = (today.month, today.day) >= (bm, bd)
                 bday_desc = f"生日 {bm}/{bd} 今年{'已過 ✅' if passed else '尚未到 ⏳'}"
                 st.info(f"📅 {bday_desc}｜個人年基準：{years[1]} 年")
 
                 st.subheader("📊 三年流年 × 階段數對照表")
-                render_numerology_table(input_bday)
+                render_numerology_table(input_bday, input_btime)
 
                 st.divider()
                 st.subheader("📐 詳細計算過程")
+                jd_result, jd_stage, jd_label = calc_jieduan(
+                    by, bm, bd, birth_hour, birth_minute, age)
+                st.markdown(f"**人生階段：{jd_stage}（{age} 歲）**　｜　階段數：{jd_label}")
+
                 for yr, lbl in zip(years, labels):
                     ln = calc_liunian(yr, bm, bd)
                     ln_steps = " → ".join(str(x) for x in _reduce_chain(
                         sum(int(d) for d in (str(yr)+str(bm)+str(bd)))))
-                    jd = calc_jieduan(by, bm)
-                    jd_steps = " → ".join(str(x) for x in _reduce_chain(
-                        sum(int(d) for d in (str(by)+str(bm)))))
-
-                    with st.expander(f"{yr}（{lbl}）— 流年 {ln.split('/')[-1]}，階段 {jd.split('/')[-1]}"):
+                    with st.expander(f"{yr}（{lbl}）— 流年 {ln.split('/')[-1]}"):
                         st.markdown(f"""
 **流年計算：**
 - 年份 {yr} + 月 {bm} + 日 {bd}
 - 各位數字：{' + '.join(list(str(yr)+str(bm)+str(bd)))} = {sum(int(d) for d in str(yr)+str(bm)+str(bd))}
 - 縮減過程：{ln_steps}
 - **結果：{ln.split('/')[-1]}**
-
-**階段數計算（個人固定數）：**
-- 出生年 {by} + 月 {bm}
-- 各位數字：{' + '.join(list(str(by)+str(bm)))} = {sum(int(d) for d in str(by)+str(bm))}
-- 縮減過程：{jd_steps}
-- **結果：{jd.split('/')[-1]}**
 """)
-                if input_btime:
-                    st.divider()
-                    st.markdown(f"**出生時間：** {input_btime}")
             else:
                 st.error("⚠️ 生日格式錯誤，請輸入 YYYY/MM/DD（例：2000/10/10）")
         else:
