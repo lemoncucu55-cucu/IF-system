@@ -15,7 +15,7 @@ ORDER_COLUMNS = [
     '訂單編號', '建立時間', '客戶名稱', '客戶電話', '商品種類', '客製品項',
     '手圍', '生日', '出生時間', '喜神', '忌神',
     '流年去年', '流年今年', '流年明年', '階段數',
-    '總售價', '備註', '狀態', '建單人'
+    '總售價', '成本', '備註', '狀態', '建單人'
 ]
 
 CUSTOM_ITEMS = ["手鍊", "項鍊", "鑰匙圈"]
@@ -56,7 +56,6 @@ def calc_liunian(year, birth_month, birth_day):
     return "/".join(str(x) for x in chain)
 
 def calc_age(birth_year, birth_month, birth_day, today=None):
-    """計算目前實際年齡"""
     if today is None:
         today = datetime.now().date()
     age = today.year - birth_year
@@ -65,7 +64,6 @@ def calc_age(birth_year, birth_month, birth_day, today=None):
     return age
 
 def get_life_stage(age):
-    """根據年齡回傳人生階段名稱"""
     if age <= 10:
         return "幼年"
     elif age <= 20:
@@ -78,7 +76,6 @@ def get_life_stage(age):
         return "老年"
 
 def parse_birth_time(btime_str):
-    """解析出生時間字串（HH:MM），回傳 (hour, minute) 或 (None, None)"""
     if not btime_str or not str(btime_str).strip():
         return None, None
     try:
@@ -97,18 +94,17 @@ def calc_jieduan(birth_year, birth_month, birth_day=None,
       中年（41–60）  → 年 + 月
       青年（21–40）  → 年 + 月 + 日
       少年（11–20）  → 年 + 月 + 日 + 時
-      幼年（0–10）    → 年 + 月 + 日 + 時 + 分
+      幼年（0–10）   → 年 + 月 + 日 + 時 + 分
     回傳 (結果字串, 階段名稱, 計算說明)
     """
     if age is None:
         if birth_day:
             age = calc_age(birth_year, birth_month, birth_day)
         else:
-            age = 30  # 無法判斷時預設青年
+            age = 30
 
     stage = get_life_stage(age)
-
-    digits_str = str(birth_year)
+    digits_str  = str(birth_year)
     label_parts = [f"年({birth_year})"]
 
     if stage in ["幼年", "少年", "青年", "中年"]:
@@ -127,11 +123,10 @@ def calc_jieduan(birth_year, birth_month, birth_day=None,
         digits_str += str(birth_minute)
         label_parts.append(f"分({birth_minute})")
 
-    total = sum(int(d) for d in digits_str)
-    chain = _reduce_chain(total)
+    total  = sum(int(d) for d in digits_str)
+    chain  = _reduce_chain(total)
     result = "/".join(str(x) for x in chain)
     label  = " + ".join(label_parts) + f" → {result}"
-
     return result, stage, label
 
 def personal_year_range(birth_month, birth_day, today=None):
@@ -153,30 +148,36 @@ def parse_birthday(bday_str):
     return None
 
 def render_numerology_table(bday_str, btime_str=""):
-    """根據生日（與出生時間）顯示五階段數 + 流年表，成功回傳 True"""
+    """根據生日（與出生時間）顯示五階段數卡片 + 流年表，成功回傳 True"""
     parsed = parse_birthday(bday_str)
     if not parsed:
         st.warning("⚠️ 生日格式錯誤，請使用 YYYY/MM/DD（例：2000/10/10）")
         return False
 
-    by, bm, bd = parsed
+    by, bm, bd    = parsed
     birth_hour, birth_minute = parse_birth_time(btime_str)
-    age       = calc_age(by, bm, bd)
-    cur_stage = get_life_stage(age)
+    age           = calc_age(by, bm, bd)
+    cur_stage     = get_life_stage(age)
+
+    # ── 目前階段提示 ──
+    jd_cur, _, jd_label = calc_jieduan(by, bm, bd, birth_hour, birth_minute, age)
+    st.info(
+        f"{'🍼' if cur_stage=='幼年' else '🌱' if cur_stage=='少年' else '🔥' if cur_stage=='青年' else '🌳' if cur_stage=='中年' else '🌙'} "
+        f"目前階段：**{cur_stage}**（{age} 歲）｜階段數公式：{jd_label}｜**階段數 = {jd_cur.split('/')[-1]}**"
+    )
 
     # ── 五階段卡片（左→右：老年 中年 青年 少年 幼年）──
     stage_configs = [
-        ("老年", "61 歲以上", 70,  True,  True,  True),
-        ("中年", "41 – 60 歲", 50, True,  True,  True),
-        ("青年", "21 – 40 歲", 30, True,  True,  True),
-        ("少年", "11 – 20 歲", 15, True,  True,  False),
-        ("幼年", "0 – 10 歲",   5, True,  False, False),
+        ("老年", "61 歲以上",  70, False, False),
+        ("中年", "41 – 60 歲", 50, False, False),
+        ("青年", "21 – 40 歲", 30, False, False),
+        ("少年", "11 – 20 歲", 15, True,  False),
+        ("幼年", "0 – 10 歲",   5, True,  True),
     ]
-    # 欄位說明：(階段名, 年齡文字, 代表年齡, 需要日, 需要時, 需要分)
+    # 欄位：(階段名, 年齡文字, 代表年齡, 需要時, 需要分)
 
     cols = st.columns(5)
-    for col, (sname, age_label, mid_age, need_day, need_hour, need_min) in zip(cols, stage_configs):
-        # 判斷資料是否齊全
+    for col, (sname, age_label, mid_age, need_hour, need_min) in zip(cols, stage_configs):
         has_data = True
         if need_hour and birth_hour is None:
             has_data = False
@@ -185,18 +186,16 @@ def render_numerology_table(bday_str, btime_str=""):
 
         if has_data:
             res, _, _ = calc_jieduan(by, bm, bd, birth_hour, birth_minute, mid_age)
-            display = res  # 例如 "36/9"
+            display = res
         else:
             display = "—"
 
         is_cur = (sname == cur_stage)
-
-        # 目前階段用深藍底色，其他用淺藍
-        bg    = "#1a3a8f" if is_cur else "#e8eef7"
-        color = "#ffffff" if is_cur else "#1a3a8f"
-        border = "2px solid #1a3a8f" if is_cur else "2px solid transparent"
-        title_color = "#1a3a8f" if is_cur else "#333333"
-        cur_label = " ◀ 目前" if is_cur else ""
+        bg           = "#1a3a8f" if is_cur else "#e8eef7"
+        color        = "#ffffff" if is_cur else "#1a3a8f"
+        border       = "2px solid #1a3a8f" if is_cur else "2px solid transparent"
+        title_color  = "#1a3a8f" if is_cur else "#333333"
+        cur_label    = " ◀ 目前" if is_cur else ""
 
         with col:
             st.markdown(
@@ -220,34 +219,15 @@ def render_numerology_table(bday_str, btime_str=""):
 
     # ── 流年三年對照表 ──
     st.caption("📅 流年三年對照")
-    cur_res, _, _ = calc_jieduan(by, bm, bd, birth_hour, birth_minute, age)
     years  = personal_year_range(bm, bd)
     labels = ["去年", "今年", "明年"]
     rows   = []
     for yr, lbl in zip(years, labels):
         ln = calc_liunian(yr, bm, bd)
         rows.append({
-            "年份":     f"{yr}（{lbl}）",
-            "流年計算": f"{yr}年 + {bm}月 + {bd}日 → {ln}",
-            "流年數":   ln.split("/")[-1],
-            "當前階段數": cur_res.split("/")[-1],
-        })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    return True
-
-    st.divider()
-
-    # ── 流年三年對照表 ──
-    st.caption("📅 流年三年對照")
-    years  = personal_year_range(bm, bd)
-    labels = ["去年", "今年", "明年"]
-    rows   = []
-    for yr, lbl in zip(years, labels):
-        ln = calc_liunian(yr, bm, bd)
-        rows.append({
-            "年份":     f"{yr}（{lbl}）",
-            "流年計算": f"{yr}年 + {bm}月 + {bd}日 → {ln}",
-            "流年數":   ln.split("/")[-1],
+            "年份":      f"{yr}（{lbl}）",
+            "流年計算":  f"{yr}年 + {bm}月 + {bd}日 → {ln}",
+            "流年數":    ln.split("/")[-1],
             "當前階段數": jd_cur.split("/")[-1],
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -313,12 +293,10 @@ def _save_sheet(tab, df):
         st.error(f"儲存 {tab} 失敗: {e}")
 
 def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
-    """根據生日與出生時間，自動填入流年去年/今年/明年 + 階段數"""
     df = df.copy()
     for col in ["流年去年", "流年今年", "流年明年", "階段數"]:
         if col not in df.columns:
             df[col] = ""
-
     for idx, row in df.iterrows():
         bday_str  = str(row.get("生日", "")).strip()
         btime_str = str(row.get("出生時間", "")).strip()
@@ -328,13 +306,11 @@ def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
             continue
         by, bm, bd = parsed
         birth_hour, birth_minute = parse_birth_time(btime_str)
-        age = calc_age(by, bm, bd)
-
+        age   = calc_age(by, bm, bd)
         years = personal_year_range(bm, bd)
         df.loc[idx, "流年去年"] = calc_liunian(years[0], bm, bd)
         df.loc[idx, "流年今年"] = calc_liunian(years[1], bm, bd)
         df.loc[idx, "流年明年"] = calc_liunian(years[2], bm, bd)
-
         jd_result, _, _ = calc_jieduan(by, bm, bd, birth_hour, birth_minute, age)
         df.loc[idx, "階段數"] = jd_result
     return df
@@ -485,11 +461,12 @@ if page == "📝 建立訂單":
         customer_phone = c2.text_input("客戶電話",   value=prefill.get("客戶電話", ""))
 
         st.subheader("訂單資訊")
-        c3, c4, c5, c5b = st.columns(4)
+        c3, c4, c5, c5b, c5c = st.columns(5)
         product_type  = c3.selectbox("商品種類", ["客製", "公版"])
         custom_item   = c4.selectbox("客製品項", CUSTOM_ITEMS)
         order_creator = c5.selectbox("建單人",   ["Imeng", "千畇"])
-        total_price   = c5b.number_input("總售價 ($)（可之後再填）", min_value=0.0, value=0.0)
+        total_price   = c5b.number_input("總售價 ($)", min_value=0.0, value=0.0)
+        cost_price    = c5c.number_input("成本 ($)",   min_value=0.0, value=0.0)
 
         st.subheader("手鍊 & 出生資訊")
         b1, b2, b3 = st.columns(3)
@@ -527,6 +504,7 @@ if page == "📝 建立訂單":
                     "喜神":     "、".join(xi_shen),
                     "忌神":     "、".join(ji_shen),
                     "總售價":   str(total_price),
+                    "成本":     str(cost_price),
                     "備註":     order_note,
                     "狀態":     "待確認",
                     "建單人":   order_creator,
@@ -576,7 +554,7 @@ elif page == "📋 訂單列表":
             bday_val  = safe_get(edit_row, "生日")
             btime_val = safe_get(edit_row, "出生時間")
             if bday_val:
-                st.markdown("**📊 流年 × 階段數 三年對照表**")
+                st.markdown("**📊 流年 × 階段數**")
                 render_numerology_table(bday_val, btime_val)
             else:
                 st.caption("ℹ️ 此訂單無生日資料，無法顯示流年計算。")
@@ -591,18 +569,20 @@ elif page == "📋 訂單列表":
             e_bday  = b2.text_input("生日（YYYY/MM/DD）", value=safe_get(edit_row, "生日"))
             e_btime = b3.text_input("出生時間（HH:MM）",  value=safe_get(edit_row, "出生時間"))
 
-            c3, c4, c5, c5b = st.columns(4)
+            c3, c4, c5, c5b, c5c = st.columns(5)
             cur_type = safe_get(edit_row, "商品種類")
-            e_type    = c3.selectbox("商品種類", ["客製","公版"],
+            e_type   = c3.selectbox("商品種類", ["客製","公版"],
                 index=["客製","公版"].index(cur_type) if cur_type in ["客製","公版"] else 0)
             cur_item = safe_get(edit_row, "客製品項")
-            e_item    = c4.selectbox("客製品項", CUSTOM_ITEMS,
+            e_item   = c4.selectbox("客製品項", CUSTOM_ITEMS,
                 index=CUSTOM_ITEMS.index(cur_item) if cur_item in CUSTOM_ITEMS else 0)
             cur_creator = safe_get(edit_row, "建單人")
             e_creator = c5.selectbox("建單人", ["Imeng","千畇"],
                 index=["Imeng","千畇"].index(cur_creator) if cur_creator in ["Imeng","千畇"] else 0)
             price_val = safe_get(edit_row, "總售價")
             e_price   = c5b.number_input("總售價 ($)", value=float(price_val) if price_val else 0.0)
+            cost_val  = safe_get(edit_row, "成本")
+            e_cost    = c5c.number_input("成本 ($)", value=float(cost_val) if cost_val else 0.0, key="list_cost")
 
             c6, c7 = st.columns(2)
             xi_val = safe_get(edit_row, "喜神")
@@ -627,6 +607,7 @@ elif page == "📋 訂單列表":
                 orders_df.loc[edit_idx, "客製品項"] = str(e_item)
                 orders_df.loc[edit_idx, "建單人"]   = str(e_creator)
                 orders_df.loc[edit_idx, "總售價"]   = str(e_price)
+                orders_df.loc[edit_idx, "成本"]     = str(e_cost)
                 orders_df.loc[edit_idx, "喜神"]     = "、".join(e_xi)
                 orders_df.loc[edit_idx, "忌神"]     = "、".join(e_ji)
                 orders_df.loc[edit_idx, "狀態"]     = str(e_status)
@@ -678,12 +659,20 @@ elif page == "🔄 訂單管理":
             order_id  = sel_order["訂單編號"]
 
             with st.container(border=True):
-                c1, c2, c3, c4 = st.columns(4)
+                # ── 數字摘要：6 格 ──
+                c1, c2, c3, c4, c5, c6 = st.columns(6)
                 c1.metric("訂單編號", order_id)
                 c2.metric("客戶",    safe_get(sel_order, "客戶名稱"))
                 price_v = safe_get(sel_order, "總售價")
-                c3.metric("總售價",  f"${float(price_v):,.2f}" if price_v else "$0")
-                c4.metric("目前狀態", safe_get(sel_order, "狀態"))
+                cost_v  = safe_get(sel_order, "成本")
+                price_f = float(price_v) if price_v else 0.0
+                cost_f  = float(cost_v)  if cost_v  else 0.0
+                profit  = price_f - cost_f
+                c3.metric("總售價", f"${price_f:,.0f}")
+                c4.metric("成本",   f"${cost_f:,.0f}")
+                c5.metric("利潤",   f"${profit:,.0f}",
+                          delta=f"{(profit/price_f*100):.0f}%" if price_f else None)
+                c6.metric("目前狀態", safe_get(sel_order, "狀態"))
 
                 st.write(
                     f"**電話：** {safe_get(sel_order,'客戶電話') or '-'} | "
@@ -703,7 +692,7 @@ elif page == "🔄 訂單管理":
                 bday_val  = safe_get(sel_order, "生日")
                 btime_val = safe_get(sel_order, "出生時間")
                 if bday_val:
-                    st.markdown("**📊 流年 × 階段數 三年對照表**")
+                    st.markdown("**📊 流年 × 階段數**")
                     render_numerology_table(bday_val, btime_val)
 
             st.divider()
@@ -717,26 +706,30 @@ elif page == "🔄 訂單管理":
                 edit_item = ce0b.selectbox("客製品項", CUSTOM_ITEMS,
                     index=CUSTOM_ITEMS.index(cur_oitem) if cur_oitem in CUSTOM_ITEMS else 0)
 
-                ce1, ce2, ce3, ce4 = st.columns(4)
+                ce1, ce2, ce3, ce4, ce5 = st.columns(5)
                 edit_price = ce1.number_input("修改總售價 ($)",
                     value=float(safe_get(sel_order,"總售價")) if safe_get(sel_order,"總售價") else 0.0)
-                edit_wrist = ce2.text_input("手圍",              value=safe_get(sel_order,"手圍"))
-                edit_bday  = ce3.text_input("生日（YYYY/MM/DD）", value=safe_get(sel_order,"生日"))
-                edit_btime = ce4.text_input("出生時間（HH:MM）",  value=safe_get(sel_order,"出生時間"))
+                edit_cost  = ce2.number_input("修改成本 ($)",
+                    value=float(safe_get(sel_order,"成本")) if safe_get(sel_order,"成本") else 0.0,
+                    key="mgmt_cost")
+                edit_wrist = ce3.text_input("手圍",              value=safe_get(sel_order,"手圍"))
+                edit_bday  = ce4.text_input("生日（YYYY/MM/DD）", value=safe_get(sel_order,"生日"))
+                edit_btime = ce5.text_input("出生時間（HH:MM）",  value=safe_get(sel_order,"出生時間"))
                 edit_note  = st.text_input("備註", value=safe_get(sel_order,"備註"))
 
-                ce5, ce6 = st.columns(2)
+                ce6, ce7 = st.columns(2)
                 cx_v = safe_get(sel_order,"喜神")
                 cj_v = safe_get(sel_order,"忌神")
                 cx = [x for x in cx_v.split("、") if x in WUXING_OPTS] if cx_v else []
                 cj = [x for x in cj_v.split("、") if x in WUXING_OPTS] if cj_v else []
-                edit_xi = ce5.multiselect("喜神", WUXING_OPTS, default=cx)
-                edit_ji = ce6.multiselect("忌神", WUXING_OPTS, default=cj)
+                edit_xi = ce6.multiselect("喜神", WUXING_OPTS, default=cx)
+                edit_ji = ce7.multiselect("忌神", WUXING_OPTS, default=cj)
 
                 if st.form_submit_button("💾 儲存修改"):
                     orders_df.loc[sel_idx, "商品種類"] = str(edit_type)
                     orders_df.loc[sel_idx, "客製品項"] = str(edit_item)
                     orders_df.loc[sel_idx, "總售價"]   = str(edit_price)
+                    orders_df.loc[sel_idx, "成本"]     = str(edit_cost)
                     orders_df.loc[sel_idx, "手圍"]     = str(edit_wrist)
                     orders_df.loc[sel_idx, "生日"]     = str(edit_bday)
                     orders_df.loc[sel_idx, "出生時間"] = str(edit_btime)
@@ -789,16 +782,19 @@ elif page == "📜 訂單紀錄":
     if orders_df.empty:
         st.info("目前沒有任何訂單。")
     else:
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("總訂單數", f"{len(orders_df)} 筆")
         c2.metric("已完成",   f"{len(orders_df[orders_df['狀態']=='已完成'])} 筆")
         c3.metric("進行中",   f"{len(orders_df[orders_df['狀態'].isin(['待確認','已確認','已出貨'])])} 筆")
         try:
-            rev = orders_df[orders_df["狀態"]=="已完成"]["總售價"].apply(
-                lambda x: float(x) if x else 0).sum()
-            c4.metric("已完成總營收", f"${rev:,.2f}")
+            done = orders_df[orders_df["狀態"]=="已完成"]
+            rev  = done["總售價"].apply(lambda x: float(x) if x else 0).sum()
+            cost = done["成本"].apply(lambda x: float(x) if x else 0).sum()
+            c4.metric("已完成總營收", f"${rev:,.0f}")
+            c5.metric("已完成總利潤", f"${rev-cost:,.0f}")
         except:
             c4.metric("已完成總營收", "$0")
+            c5.metric("已完成總利潤", "$0")
 
         st.divider()
         st.dataframe(orders_df.iloc[::-1], use_container_width=True)
@@ -904,7 +900,7 @@ elif page == "👥 客戶管理":
             bday_val  = safe_get(cust_row, "生日")
             btime_val = safe_get(cust_row, "出生時間")
             if bday_val:
-                st.markdown("#### 📊 流年 × 階段數 三年對照表（自動計算）")
+                st.markdown("#### 📊 流年 × 階段數（自動計算）")
                 render_numerology_table(bday_val, btime_val)
             else:
                 st.info("ℹ️ 請填寫生日後，系統將自動計算三年流年與階段數。")
@@ -1156,25 +1152,19 @@ elif page == "🔢 數字學計算":
                 by, bm, bd = parsed
                 birth_hour, birth_minute = parse_birth_time(input_btime)
                 age   = calc_age(by, bm, bd)
-                stage = get_life_stage(age)
-                years  = personal_year_range(bm, bd)
-                labels = ["去年", "今年", "明年"]
-                today  = datetime.now().date()
+                years = personal_year_range(bm, bd)
+                today = datetime.now().date()
 
                 passed    = (today.month, today.day) >= (bm, bd)
                 bday_desc = f"生日 {bm}/{bd} 今年{'已過 ✅' if passed else '尚未到 ⏳'}"
                 st.info(f"📅 {bday_desc}｜個人年基準：{years[1]} 年")
 
-                st.subheader("📊 三年流年 × 階段數對照表")
+                st.subheader("📊 五階段數 × 流年對照")
                 render_numerology_table(input_bday, input_btime)
 
                 st.divider()
-                st.subheader("📐 詳細計算過程")
-                jd_result, jd_stage, jd_label = calc_jieduan(
-                    by, bm, bd, birth_hour, birth_minute, age)
-                st.markdown(f"**人生階段：{jd_stage}（{age} 歲）**　｜　階段數：{jd_label}")
-
-                for yr, lbl in zip(years, labels):
+                st.subheader("📐 流年詳細計算過程")
+                for yr, lbl in zip(years, ["去年","今年","明年"]):
                     ln = calc_liunian(yr, bm, bd)
                     ln_steps = " → ".join(str(x) for x in _reduce_chain(
                         sum(int(d) for d in (str(yr)+str(bm)+str(bd)))))
