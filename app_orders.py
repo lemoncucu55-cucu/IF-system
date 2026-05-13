@@ -315,12 +315,29 @@ def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[idx, "階段數"] = jd_result
     return df
 
-def load_orders():          return _load_sheet("Orders",        ORDER_COLUMNS)
-def save_orders(df):        _save_sheet("Orders",        fill_numerology(df))
-def load_customers():       return _load_sheet("Customers",     CUSTOMER_COLUMNS)
-def save_customers(df):     _save_sheet("Customers",     fill_numerology(df))
-def load_relationships():   return _load_sheet("Relationships", RELATIONSHIP_COLUMNS)
-def save_relationships(df): _save_sheet("Relationships", df)
+@st.cache_data(ttl=30)
+def load_orders():
+    return _load_sheet("Orders", ORDER_COLUMNS)
+
+@st.cache_data(ttl=30)
+def load_customers():
+    return _load_sheet("Customers", CUSTOMER_COLUMNS)
+
+@st.cache_data(ttl=30)
+def load_relationships():
+    return _load_sheet("Relationships", RELATIONSHIP_COLUMNS)
+
+def save_orders(df):
+    _save_sheet("Orders", fill_numerology(df))
+    load_orders.clear()
+
+def save_customers(df):
+    _save_sheet("Customers", fill_numerology(df))
+    load_customers.clear()
+
+def save_relationships(df):
+    _save_sheet("Relationships", df)
+    load_relationships.clear()
 
 def get_customer_relations(name: str, rel_df: pd.DataFrame) -> pd.DataFrame:
     if rel_df.empty or not name:
@@ -401,10 +418,13 @@ with st.sidebar:
 
     # ── 未出貨提醒 ──
     st.divider()
-    _all_orders_sb = load_orders()
-    _unshipped_sb  = _all_orders_sb[
-        _all_orders_sb["狀態"].isin(["待確認", "已確認"])
-    ] if not _all_orders_sb.empty else pd.DataFrame()
+        try:
+        _all_orders_sb = load_orders()
+        _unshipped_sb  = _all_orders_sb[
+            _all_orders_sb["狀態"].isin(["待確認", "已確認", "未付款未出貨", "已付款未出貨"])
+        ] if not _all_orders_sb.empty else pd.DataFrame()
+    except Exception:
+        _unshipped_sb = pd.DataFrame()
     if not _unshipped_sb.empty:
         st.error(f"🚨 未出貨訂單：{len(_unshipped_sb)} 筆")
         for _, _r in _unshipped_sb.iterrows():
