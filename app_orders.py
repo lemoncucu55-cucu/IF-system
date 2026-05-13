@@ -740,7 +740,7 @@ elif page == "🔄 訂單管理":
                     st.success("✅ 訂單已更新！")
                     time.sleep(1); st.rerun()
 
-                        st.divider()
+            st.divider()
             st.subheader("📌 變更狀態")
             cur_status = safe_get(sel_order, "狀態")
 
