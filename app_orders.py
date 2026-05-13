@@ -748,6 +748,18 @@ elif page == "🔄 訂單管理":
                     edit_wrist = ce3.text_input("手圍",               value=safe_get(sel_order,"手圍"))
                     edit_bday  = ce4.text_input("生日（YYYY/MM/DD）", value=safe_get(sel_order,"生日"))
                     edit_btime = ce5.text_input("出生時間（HH:MM）",  value=safe_get(sel_order,"出生時間"))
+                                       st.divider()
+                    sf1, sf2, sf3 = st.columns(3)
+                    SHIP_METHOD = ["—", "郵局", "7-11", "全家"]
+                    cur_smethod = safe_get(sel_order, "出貨方式")
+                    edit_ship_method = sf1.selectbox("出貨方式", SHIP_METHOD,
+                        index=SHIP_METHOD.index(cur_smethod) if cur_smethod in SHIP_METHOD else 0,
+                        key="mgmt_ship_method")
+                    edit_ship_number = sf2.text_input("出貨單號", value=safe_get(sel_order, "出貨單號"), key="mgmt_ship_num")
+                    ship_fee_val = safe_get(sel_order, "運費")
+                    edit_ship_fee = sf3.number_input("運費 ($)",
+                        value=float(ship_fee_val) if ship_fee_val else 0.0, key="mgmt_ship_fee")
+
                     edit_note  = st.text_input("備註", value=safe_get(sel_order,"備註"))
 
                     ce6, ce7 = st.columns(2)
@@ -769,6 +781,9 @@ elif page == "🔄 訂單管理":
                         orders_df.loc[sel_idx, "備註"]     = str(edit_note)
                         orders_df.loc[sel_idx, "喜神"]     = "、".join(edit_xi)
                         orders_df.loc[sel_idx, "忌神"]     = "、".join(edit_ji)
+                        orders_df.loc[sel_idx, "出貨方式"] = str(edit_ship_method)
+                        orders_df.loc[sel_idx, "出貨單號"] = str(edit_ship_number)
+                        orders_df.loc[sel_idx, "運費"]     = str(edit_ship_fee)
                         save_orders(orders_df)
                         st.success("✅ 訂單已更新！")
                         time.sleep(1); st.rerun()
