@@ -748,7 +748,7 @@ elif page == "🔄 訂單管理":
                     edit_wrist = ce3.text_input("手圍",               value=safe_get(sel_order,"手圍"))
                     edit_bday  = ce4.text_input("生日（YYYY/MM/DD）", value=safe_get(sel_order,"生日"))
                     edit_btime = ce5.text_input("出生時間（HH:MM）",  value=safe_get(sel_order,"出生時間"))
-                                       st.divider()
+                    st.divider()
                     sf1, sf2, sf3 = st.columns(3)
                     SHIP_METHOD = ["—", "郵局", "7-11", "全家"]
                     cur_smethod = safe_get(sel_order, "出貨方式")
