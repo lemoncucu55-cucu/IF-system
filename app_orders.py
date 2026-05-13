@@ -418,7 +418,7 @@ with st.sidebar:
 
     # ── 未出貨提醒 ──
     st.divider()
-        try:
+    try:
         _all_orders_sb = load_orders()
         _unshipped_sb  = _all_orders_sb[
             _all_orders_sb["狀態"].isin(["待確認", "已確認", "未付款未出貨", "已付款未出貨"])
