@@ -315,15 +315,15 @@ def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[idx, "階段數"] = jd_result
     return df
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def load_orders():
     return _load_sheet("Orders", ORDER_COLUMNS)
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def load_customers():
     return _load_sheet("Customers", CUSTOMER_COLUMNS)
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def load_relationships():
     return _load_sheet("Relationships", RELATIONSHIP_COLUMNS)
 
