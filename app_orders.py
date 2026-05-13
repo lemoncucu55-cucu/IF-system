@@ -647,13 +647,19 @@ elif page == "🔄 訂單管理":
     if orders_df.empty:
         st.info("目前沒有任何訂單。")
     else:
-        active = orders_df[~orders_df["狀態"].isin(["已完成","已取消"])].copy()
-        if active.empty:
-            st.success("🎉 所有訂單都已處理完成！")
-        else:
-            active["display"] = active.apply(
-                lambda r: f"[{r['狀態']}] {r['訂單編號']} — {r['客戶名稱']} | {r['商品種類']} | ${r['總售價']}", axis=1)
-            sel_disp  = st.selectbox("選擇要管理的訂單", active["display"].tolist()[::-1])
+        tab_active, tab_done = st.tabs([
+            f"🔄 未完成（{len(orders_df[~orders_df['狀態'].isin(['已完成','已取消'])])} 筆）",
+            f"✅ 已完成（{len(orders_df[orders_df['狀態'].isin(['已完成','已取消'])])} 筆）",
+        ])
+
+        with tab_active:
+            active = orders_df[~orders_df["狀態"].isin(["已完成","已取消"])].copy()
+            if active.empty:
+                st.success("🎉 所有訂單都已處理完成！")
+            else:
+                active["display"] = active.apply(
+                    lambda r: f"[{r['狀態']}] {r['訂單編號']} — {r['客戶名稱']} | {r['商品種類']} | ${r['總售價']}", axis=1)
+                sel_disp  = st.selectbox("選擇要管理的訂單", active["display"].tolist()[::-1])
             sel_idx   = active[active["display"] == sel_disp].index[0]
             sel_order = orders_df.loc[sel_idx]
             order_id  = sel_order["訂單編號"]
