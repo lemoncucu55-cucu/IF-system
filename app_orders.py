@@ -15,7 +15,9 @@ ORDER_COLUMNS = [
     '訂單編號', '建立時間', '客戶名稱', '客戶電話', '商品種類', '客製品項',
     '手圍', '生日', '出生時間', '喜神', '忌神',
     '流年去年', '流年今年', '流年明年', '階段數',
-    '總售價', '成本', '備註', '狀態', '付款狀態', '出貨狀態', '建單人'
+    '總售價', '成本', '運費', '總成本',
+    '備註', '狀態', '付款狀態', '出貨狀態', '建單人',
+    '出貨方式', '出貨單號'
 ]
 
 CUSTOM_ITEMS = ["手鍊", "項鍊", "鑰匙圈", "車掛"]
@@ -88,15 +90,6 @@ def parse_birth_time(btime_str):
 
 def calc_jieduan(birth_year, birth_month, birth_day=None,
                  birth_hour=None, birth_minute=None, age=None):
-    """
-    依人生階段計算階段數：
-      老年（61+）    → 年
-      中年（41–60）  → 年 + 月
-      青年（21–40）  → 年 + 月 + 日
-      少年（11–20）  → 年 + 月 + 日 + 時
-      幼年（0–10）   → 年 + 月 + 日 + 時 + 分
-    回傳 (結果字串, 階段名稱, 計算說明)
-    """
     if age is None:
         if birth_day:
             age = calc_age(birth_year, birth_month, birth_day)
@@ -148,7 +141,6 @@ def parse_birthday(bday_str):
     return None
 
 def render_numerology_table(bday_str, btime_str=""):
-    """根據生日（與出生時間）顯示五階段數卡片 + 流年表，成功回傳 True"""
     parsed = parse_birthday(bday_str)
     if not parsed:
         st.warning("⚠️ 生日格式錯誤，請使用 YYYY/MM/DD（例：2000/10/10）")
@@ -159,14 +151,12 @@ def render_numerology_table(bday_str, btime_str=""):
     age           = calc_age(by, bm, bd)
     cur_stage     = get_life_stage(age)
 
-    # ── 目前階段提示 ──
     jd_cur, _, jd_label = calc_jieduan(by, bm, bd, birth_hour, birth_minute, age)
     st.info(
         f"{'🍼' if cur_stage=='幼年' else '🌱' if cur_stage=='少年' else '🔥' if cur_stage=='青年' else '🌳' if cur_stage=='中年' else '🌙'} "
         f"目前階段：**{cur_stage}**（{age} 歲）｜階段數公式：{jd_label}｜**階段數 = {jd_cur.split('/')[-1]}**"
     )
 
-    # ── 五階段卡片（左→右：老年 中年 青年 少年 幼年）──
     stage_configs = [
         ("老年", "61 歲以上",  70, False, False),
         ("中年", "41 – 60 歲", 50, False, False),
@@ -174,7 +164,6 @@ def render_numerology_table(bday_str, btime_str=""):
         ("少年", "11 – 20 歲", 15, True,  False),
         ("幼年", "0 – 10 歲",   5, True,  True),
     ]
-    # 欄位：(階段名, 年齡文字, 代表年齡, 需要時, 需要分)
 
     cols = st.columns(5)
     for col, (sname, age_label, mid_age, need_hour, need_min) in zip(cols, stage_configs):
@@ -217,7 +206,6 @@ def render_numerology_table(bday_str, btime_str=""):
 
     st.divider()
 
-    # ── 流年三年對照表 ──
     st.caption("📅 流年三年對照")
     years  = personal_year_range(bm, bd)
     labels = ["去年", "今年", "明年"]
@@ -292,6 +280,22 @@ def _save_sheet(tab, df):
     except Exception as e:
         st.error(f"儲存 {tab} 失敗: {e}")
 
+def _safe_float(val):
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
+def calc_total_cost(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "總成本" not in df.columns:
+        df["總成本"] = ""
+    for idx, row in df.iterrows():
+        cost = _safe_float(row.get("成本", 0))
+        shipping = _safe_float(row.get("運費", 0))
+        df.loc[idx, "總成本"] = str(cost + shipping)
+    return df
+
 def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for col in ["流年去年", "流年今年", "流年明年", "階段數"]:
@@ -328,7 +332,9 @@ def load_relationships():
     return _load_sheet("Relationships", RELATIONSHIP_COLUMNS)
 
 def save_orders(df):
-    _save_sheet("Orders", fill_numerology(df))
+    df = fill_numerology(df)
+    df = calc_total_cost(df)
+    _save_sheet("Orders", df)
     load_orders.clear()
 
 def save_customers(df):
@@ -416,7 +422,6 @@ with st.sidebar:
         get_gs_client.clear()
         st.rerun()
 
-    # ── 未出貨提醒 ──
     st.divider()
     try:
         _all_orders_sb = load_orders()
@@ -481,12 +486,18 @@ if page == "📝 建立訂單":
         customer_phone = c2.text_input("客戶電話",   value=prefill.get("客戶電話", ""))
 
         st.subheader("訂單資訊")
-        c3, c4, c5, c5b, c5c = st.columns(5)
+        c3, c4, c5 = st.columns(3)
         product_type  = c3.selectbox("商品種類", ["客製", "公版"])
         custom_item   = c4.selectbox("客製品項", CUSTOM_ITEMS)
         order_creator = c5.selectbox("建單人",   ["Imeng", "千畇"])
-        total_price   = c5b.number_input("總售價 ($)", min_value=0.0, value=0.0)
-        cost_price    = c5c.number_input("成本 ($)",   min_value=0.0, value=0.0)
+
+        p1, p2, p3 = st.columns(3)
+        total_price   = p1.number_input("總售價 ($)", min_value=0.0, value=0.0)
+        cost_price    = p2.number_input("成本 ($)",   min_value=0.0, value=0.0)
+        shipping_fee  = p3.number_input("運費 ($)",   min_value=0.0, value=0.0)
+
+        computed_total_cost = cost_price + shipping_fee
+        st.info(f"💰 總成本 = 成本 ${cost_price:,.0f} + 運費 ${shipping_fee:,.0f} = **${computed_total_cost:,.0f}**")
 
         st.subheader("手鍊 & 出生資訊")
         b1, b2, b3 = st.columns(3)
@@ -525,6 +536,8 @@ if page == "📝 建立訂單":
                     "忌神":     "、".join(ji_shen),
                     "總售價":   str(total_price),
                     "成本":     str(cost_price),
+                    "運費":     str(shipping_fee),
+                    "總成本":   str(cost_price + shipping_fee),
                     "備註":     order_note,
                     "狀態":     "待確認",
                     "建單人":   order_creator,
@@ -589,7 +602,7 @@ elif page == "📋 訂單列表":
             e_bday  = b2.text_input("生日（YYYY/MM/DD）", value=safe_get(edit_row, "生日"))
             e_btime = b3.text_input("出生時間（HH:MM）",  value=safe_get(edit_row, "出生時間"))
 
-            c3, c4, c5, c5b, c5c = st.columns(5)
+            c3, c4, c5 = st.columns(3)
             cur_type = safe_get(edit_row, "商品種類")
             e_type   = c3.selectbox("商品種類", ["客製","公版"],
                 index=["客製","公版"].index(cur_type) if cur_type in ["客製","公版"] else 0)
@@ -599,10 +612,14 @@ elif page == "📋 訂單列表":
             cur_creator = safe_get(edit_row, "建單人")
             e_creator = c5.selectbox("建單人", ["Imeng","千畇"],
                 index=["Imeng","千畇"].index(cur_creator) if cur_creator in ["Imeng","千畇"] else 0)
+
+            p1, p2, p3 = st.columns(3)
             price_val = safe_get(edit_row, "總售價")
-            e_price   = c5b.number_input("總售價 ($)", value=float(price_val) if price_val else 0.0)
+            e_price   = p1.number_input("總售價 ($)", value=float(price_val) if price_val else 0.0)
             cost_val  = safe_get(edit_row, "成本")
-            e_cost    = c5c.number_input("成本 ($)", value=float(cost_val) if cost_val else 0.0, key="list_cost")
+            e_cost    = p2.number_input("成本 ($)", value=float(cost_val) if cost_val else 0.0, key="list_cost")
+            ship_val  = safe_get(edit_row, "運費")
+            e_ship    = p3.number_input("運費 ($)", value=float(ship_val) if ship_val else 0.0, key="list_ship")
 
             c6, c7 = st.columns(2)
             xi_val = safe_get(edit_row, "喜神")
@@ -628,6 +645,8 @@ elif page == "📋 訂單列表":
                 orders_df.loc[edit_idx, "建單人"]   = str(e_creator)
                 orders_df.loc[edit_idx, "總售價"]   = str(e_price)
                 orders_df.loc[edit_idx, "成本"]     = str(e_cost)
+                orders_df.loc[edit_idx, "運費"]     = str(e_ship)
+                orders_df.loc[edit_idx, "總成本"]   = str(e_cost + e_ship)
                 orders_df.loc[edit_idx, "喜神"]     = "、".join(e_xi)
                 orders_df.loc[edit_idx, "忌神"]     = "、".join(e_ji)
                 orders_df.loc[edit_idx, "狀態"]     = str(e_status)
@@ -644,7 +663,6 @@ elif page == "🔄 訂單管理":
     st.header("🔄 訂單管理")
     orders_df = load_orders()
 
-    # ── 未出貨提醒 Banner ──
     if not orders_df.empty:
         unshipped = orders_df[orders_df["狀態"].isin(["待確認", "已確認", "未付款未出貨", "已付款未出貨"])].copy()
         if not unshipped.empty:
@@ -678,9 +696,6 @@ elif page == "🔄 訂單管理":
             f"✅ 已完成（{len(done_df)} 筆）",
         ])
 
-        # ════════════════════════════════
-        # 未完成 Tab
-        # ════════════════════════════════
         with tab_active:
             if active_df.empty:
                 st.success("🎉 所有訂單都已處理完成！")
@@ -693,21 +708,27 @@ elif page == "🔄 訂單管理":
                 order_id  = sel_order["訂單編號"]
 
                 with st.container(border=True):
-                    c1, c2, c3, c4, c5, c6 = st.columns(6)
+                    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
                     c1.metric("訂單編號", order_id)
                     c2.metric("客戶",    safe_get(sel_order, "客戶名稱"))
                     price_v = safe_get(sel_order, "總售價")
                     cost_v  = safe_get(sel_order, "成本")
-                    price_f = float(price_v) if price_v else 0.0
-                    cost_f  = float(cost_v)  if cost_v  else 0.0
-                    profit  = price_f - cost_f
+                    ship_v  = safe_get(sel_order, "運費")
+                    tc_v    = safe_get(sel_order, "總成本")
+                    price_f = _safe_float(price_v)
+                    cost_f  = _safe_float(cost_v)
+                    ship_f  = _safe_float(ship_v)
+                    tc_f    = _safe_float(tc_v) if tc_v else cost_f + ship_f
+                    profit  = price_f - tc_f
                     c3.metric("總售價", f"${price_f:,.0f}")
                     c4.metric("成本",   f"${cost_f:,.0f}")
-                    c5.metric("利潤",   f"${profit:,.0f}",
+                    c5.metric("運費",   f"${ship_f:,.0f}")
+                    c6.metric("總成本", f"${tc_f:,.0f}")
+                    c7.metric("利潤",   f"${profit:,.0f}",
                               delta=f"{(profit/price_f*100):.0f}%" if price_f else None)
-                    c6.metric("目前狀態", safe_get(sel_order, "狀態"))
 
                     st.write(
+                        f"**目前狀態：** {safe_get(sel_order, '狀態')} | "
                         f"**電話：** {safe_get(sel_order,'客戶電話') or '-'} | "
                         f"**商品種類：** {safe_get(sel_order,'商品種類') or '-'} | "
                         f"**客製品項：** {safe_get(sel_order,'客製品項') or '-'} | "
@@ -739,26 +760,31 @@ elif page == "🔄 訂單管理":
                     edit_item = ce0b.selectbox("客製品項", CUSTOM_ITEMS,
                         index=CUSTOM_ITEMS.index(cur_oitem) if cur_oitem in CUSTOM_ITEMS else 0)
 
-                    ce1, ce2, ce3, ce4, ce5 = st.columns(5)
+                    ce1, ce2, ce3 = st.columns(3)
                     edit_price = ce1.number_input("修改總售價 ($)",
-                        value=float(safe_get(sel_order,"總售價")) if safe_get(sel_order,"總售價") else 0.0)
+                        value=_safe_float(safe_get(sel_order,"總售價")))
                     edit_cost  = ce2.number_input("修改成本 ($)",
-                        value=float(safe_get(sel_order,"成本")) if safe_get(sel_order,"成本") else 0.0,
+                        value=_safe_float(safe_get(sel_order,"成本")),
                         key="mgmt_cost")
-                    edit_wrist = ce3.text_input("手圍",               value=safe_get(sel_order,"手圍"))
-                    edit_bday  = ce4.text_input("生日（YYYY/MM/DD）", value=safe_get(sel_order,"生日"))
-                    edit_btime = ce5.text_input("出生時間（HH:MM）",  value=safe_get(sel_order,"出生時間"))
+                    edit_ship_fee = ce3.number_input("修改運費 ($)",
+                        value=_safe_float(safe_get(sel_order,"運費")),
+                        key="mgmt_ship_fee")
+
+                    computed_tc = edit_cost + edit_ship_fee
+                    st.info(f"💰 總成本 = 成本 ${edit_cost:,.0f} + 運費 ${edit_ship_fee:,.0f} = **${computed_tc:,.0f}**　｜　利潤 = ${edit_price - computed_tc:,.0f}")
+
+                    ce3a, ce3b, ce3c = st.columns(3)
+                    edit_wrist = ce3a.text_input("手圍",               value=safe_get(sel_order,"手圍"))
+                    edit_bday  = ce3b.text_input("生日（YYYY/MM/DD）", value=safe_get(sel_order,"生日"))
+                    edit_btime = ce3c.text_input("出生時間（HH:MM）",  value=safe_get(sel_order,"出生時間"))
                     st.divider()
-                    sf1, sf2, sf3 = st.columns(3)
+                    sf1, sf2 = st.columns(2)
                     SHIP_METHOD = ["—", "郵局", "7-11", "全家"]
                     cur_smethod = safe_get(sel_order, "出貨方式")
                     edit_ship_method = sf1.selectbox("出貨方式", SHIP_METHOD,
                         index=SHIP_METHOD.index(cur_smethod) if cur_smethod in SHIP_METHOD else 0,
                         key="mgmt_ship_method")
                     edit_ship_number = sf2.text_input("出貨單號", value=safe_get(sel_order, "出貨單號"), key="mgmt_ship_num")
-                    ship_fee_val = safe_get(sel_order, "運費")
-                    edit_ship_fee = sf3.number_input("運費 ($)",
-                        value=float(ship_fee_val) if ship_fee_val else 0.0, key="mgmt_ship_fee")
 
                     edit_note  = st.text_input("備註", value=safe_get(sel_order,"備註"))
 
@@ -775,6 +801,8 @@ elif page == "🔄 訂單管理":
                         orders_df.loc[sel_idx, "客製品項"] = str(edit_item)
                         orders_df.loc[sel_idx, "總售價"]   = str(edit_price)
                         orders_df.loc[sel_idx, "成本"]     = str(edit_cost)
+                        orders_df.loc[sel_idx, "運費"]     = str(edit_ship_fee)
+                        orders_df.loc[sel_idx, "總成本"]   = str(edit_cost + edit_ship_fee)
                         orders_df.loc[sel_idx, "手圍"]     = str(edit_wrist)
                         orders_df.loc[sel_idx, "生日"]     = str(edit_bday)
                         orders_df.loc[sel_idx, "出生時間"] = str(edit_btime)
@@ -783,7 +811,6 @@ elif page == "🔄 訂單管理":
                         orders_df.loc[sel_idx, "忌神"]     = "、".join(edit_ji)
                         orders_df.loc[sel_idx, "出貨方式"] = str(edit_ship_method)
                         orders_df.loc[sel_idx, "出貨單號"] = str(edit_ship_number)
-                        orders_df.loc[sel_idx, "運費"]     = str(edit_ship_fee)
                         save_orders(orders_df)
                         st.success("✅ 訂單已更新！")
                         time.sleep(1); st.rerun()
@@ -834,9 +861,6 @@ elif page == "🔄 訂單管理":
                     st.warning(f"{order_id} 已取消。")
                     time.sleep(1.5); st.rerun()
 
-        # ════════════════════════════════
-        # 已完成 Tab
-        # ════════════════════════════════
         with tab_done:
             if done_df.empty:
                 st.info("尚無已完成或已取消的訂單。")
@@ -848,19 +872,25 @@ elif page == "🔄 訂單管理":
                 done_order = orders_df.loc[done_idx]
 
                 with st.container(border=True):
-                    d1, d2, d3, d4, d5, d6 = st.columns(6)
+                    d1, d2, d3, d4, d5, d6, d7 = st.columns(7)
                     d1.metric("訂單編號", done_order["訂單編號"])
                     d2.metric("客戶",    safe_get(done_order, "客戶名稱"))
                     price_v = safe_get(done_order, "總售價")
                     cost_v  = safe_get(done_order, "成本")
-                    price_f = float(price_v) if price_v else 0.0
-                    cost_f  = float(cost_v)  if cost_v  else 0.0
+                    ship_v  = safe_get(done_order, "運費")
+                    tc_v    = safe_get(done_order, "總成本")
+                    price_f = _safe_float(price_v)
+                    cost_f  = _safe_float(cost_v)
+                    ship_f  = _safe_float(ship_v)
+                    tc_f    = _safe_float(tc_v) if tc_v else cost_f + ship_f
                     d3.metric("總售價", f"${price_f:,.0f}")
                     d4.metric("成本",   f"${cost_f:,.0f}")
-                    d5.metric("利潤",   f"${price_f - cost_f:,.0f}")
-                    d6.metric("狀態",   safe_get(done_order, "狀態"))
+                    d5.metric("運費",   f"${ship_f:,.0f}")
+                    d6.metric("總成本", f"${tc_f:,.0f}")
+                    d7.metric("利潤",   f"${price_f - tc_f:,.0f}")
 
                     st.write(
+                        f"**狀態：** {safe_get(done_order, '狀態')} ｜ "
                         f"**付款狀態：** {safe_get(done_order,'付款狀態') or '-'} ｜ "
                         f"**出貨狀態：** {safe_get(done_order,'出貨狀態') or '-'} ｜ "
                         f"**商品種類：** {safe_get(done_order,'商品種類') or '-'} ｜ "
@@ -875,7 +905,6 @@ elif page == "🔄 訂單管理":
                         st.markdown("**📊 流年 × 階段數**")
                         render_numerology_table(bday_val, btime_val)
 
-                # 允許將已取消訂單改回或重新標記
                 st.divider()
                 if safe_get(done_order, "狀態") == "已取消":
                     if st.button("↩️ 重新開啟此訂單", use_container_width=True):
@@ -894,19 +923,24 @@ elif page == "📜 訂單紀錄":
     if orders_df.empty:
         st.info("目前沒有任何訂單。")
     else:
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("總訂單數", f"{len(orders_df)} 筆")
-        c2.metric("已完成",   f"{len(orders_df[orders_df['狀態']=='已完成'])} 筆")
-        c3.metric("進行中",   f"{len(orders_df[orders_df['狀態'].isin(['待確認','已確認','已出貨'])])} 筆")
+        done = orders_df[orders_df["狀態"]=="已完成"]
         try:
-            done = orders_df[orders_df["狀態"]=="已完成"]
-            rev  = done["總售價"].apply(lambda x: float(x) if x else 0).sum()
-            cost = done["成本"].apply(lambda x: float(x) if x else 0).sum()
-            c4.metric("已完成總營收", f"${rev:,.0f}")
-            c5.metric("已完成總利潤", f"${rev-cost:,.0f}")
-        except:
-            c4.metric("已完成總營收", "$0")
-            c5.metric("已完成總利潤", "$0")
+            rev       = done["總售價"].apply(lambda x: _safe_float(x)).sum()
+            total_c   = done["成本"].apply(lambda x: _safe_float(x)).sum()
+            total_s   = done["運費"].apply(lambda x: _safe_float(x)).sum()
+            total_tc  = done["總成本"].apply(lambda x: _safe_float(x)).sum()
+            if total_tc == 0:
+                total_tc = total_c + total_s
+        except Exception:
+            rev = total_c = total_s = total_tc = 0
+
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("總訂單數", f"{len(orders_df)} 筆")
+        c2.metric("已完成",   f"{len(done)} 筆")
+        c3.metric("進行中",   f"{len(orders_df[orders_df['狀態'].isin(['待確認','已確認','已出貨'])])} 筆")
+        c4.metric("已完成總營收", f"${rev:,.0f}")
+        c5.metric("已完成總成本", f"${total_tc:,.0f}")
+        c6.metric("已完成總利潤", f"${rev - total_tc:,.0f}")
 
         st.divider()
         st.dataframe(orders_df.iloc[::-1], use_container_width=True)
