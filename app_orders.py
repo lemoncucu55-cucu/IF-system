@@ -265,6 +265,37 @@ def safe_get(row, col, default=""):
     except (KeyError, TypeError):
         return default
 
+def get_lunar_bday(order_row, customers_df):
+    """
+    取得農曆生日：優先用訂單自身的值；
+    若訂單農曆生日空白，則從客戶資料表查詢同名客戶的農曆生日。
+    """
+    val = safe_get(order_row, "農曆生日")
+    if val:
+        return val
+    if customers_df is not None and not customers_df.empty:
+        name = safe_get(order_row, "客戶名稱")
+        match = customers_df[customers_df["客戶名稱"] == name]
+        if not match.empty:
+            return safe_get(match.iloc[0], "農曆生日")
+    return ""
+
+def sync_lunar_bday_to_customer(name, lunar_bday, customers_df):
+    """
+    當訂單填入農曆生日後，自動同步回客戶資料表（若客戶存在且原本為空）。
+    回傳更新後的 customers_df。
+    """
+    if not lunar_bday or customers_df is None or customers_df.empty:
+        return customers_df
+    idx_list = customers_df[customers_df["客戶名稱"] == name].index
+    if len(idx_list) == 0:
+        return customers_df
+    idx = idx_list[0]
+    if not safe_get(customers_df.loc[idx], "農曆生日"):
+        customers_df.loc[idx, "農曆生日"] = lunar_bday
+        save_customers(customers_df)
+    return customers_df
+
 def sync_customers_from_orders():
     """
     掃描 Orders 表，將尚未存在於 Customers 表的客戶自動新增進去。
@@ -474,6 +505,7 @@ elif page == "📋 訂單列表":
         st.divider()
         st.subheader("✏️ 修改訂單")
 
+        _cust_df_6 = load_customers()
         all_ids     = orders_df["訂單編號"].tolist()
         sel_edit_id = st.selectbox("選擇要修改的訂單", all_ids[::-1], key="list_edit_sel")
         edit_idx    = orders_df[orders_df["訂單編號"] == sel_edit_id].index[0]
@@ -482,7 +514,7 @@ elif page == "📋 訂單列表":
         with st.container(border=True):
             st.write(f"**客戶：** {edit_row['客戶名稱']} | **狀態：** {edit_row['狀態']} | **建立時間：** {edit_row['建立時間']}")
             bday_val = safe_get(edit_row, "生日")
-            lunar_val = safe_get(edit_row, "農曆生日")
+            lunar_val = get_lunar_bday(edit_row, _cust_df_6)
             if bday_val:
                 st.markdown("**📊 流年 × 階段數 三年對照表**")
                 render_numerology_table(bday_val, lunar_val)
@@ -497,7 +529,7 @@ elif page == "📋 訂單列表":
             b1, b2, b2b, b3 = st.columns(4)
             e_wrist        = b1.text_input("手圍",                     value=safe_get(edit_row, "手圍"))
             e_bday         = b2.text_input("國曆生日（YYYY/MM/DD）",   value=safe_get(edit_row, "生日"))
-            e_lunar_bday   = b2b.text_input("農曆生日（YYYY/MM/DD）",  value=safe_get(edit_row, "農曆生日"))
+            e_lunar_bday   = b2b.text_input("農曆生日（YYYY/MM/DD）",  value=get_lunar_bday(edit_row, _cust_df_6))
             e_btime        = b3.text_input("出生時間（HH:MM）",        value=safe_get(edit_row, "出生時間"))
 
             c3, c4, c5, c5b = st.columns(4)
@@ -542,6 +574,7 @@ elif page == "📋 訂單列表":
                 orders_df.loc[edit_idx, "狀態"]     = str(e_status)
                 orders_df.loc[edit_idx, "備註"]     = str(e_note)
                 save_orders(orders_df)
+                sync_lunar_bday_to_customer(str(e_name), str(e_lunar_bday), _cust_df_6)
                 st.success(f"✅ 訂單 {sel_edit_id} 已更新！")
                 time.sleep(1)
                 st.rerun()
@@ -582,6 +615,7 @@ elif page == "🔄 訂單管理":
         else:
             active["display"] = active.apply(
                 lambda r: f"[{r['狀態']}] {r['訂單編號']} — {r['客戶名稱']} | {r['商品種類']} | ${r['總售價']}", axis=1)
+            _cust_df_7 = load_customers()
             sel_disp  = st.selectbox("選擇要管理的訂單", active["display"].tolist()[::-1])
             sel_idx   = active[active["display"] == sel_disp].index[0]
             sel_order = orders_df.loc[sel_idx]
@@ -619,7 +653,7 @@ elif page == "🔄 訂單管理":
                     st.write(f"**備註：** {sel_order['備註']}")
 
                 bday_val = safe_get(sel_order, "生日")
-                lunar_val = safe_get(sel_order, "農曆生日")
+                lunar_val = get_lunar_bday(sel_order, _cust_df_7)
                 if bday_val:
                     st.markdown("**📊 流年 × 階段數 三年對照表**")
                     render_numerology_table(bday_val, lunar_val)
@@ -640,7 +674,7 @@ elif page == "🔄 訂單管理":
                     value=float(safe_get(sel_order,"總售價")) if safe_get(sel_order,"總售價") else 0.0)
                 edit_wrist      = ce2.text_input("手圍",                    value=safe_get(sel_order,"手圍"))
                 edit_bday       = ce3.text_input("國曆生日（YYYY/MM/DD）",  value=safe_get(sel_order,"生日"))
-                edit_lunar_bday = ce3b.text_input("農曆生日（YYYY/MM/DD）", value=safe_get(sel_order,"農曆生日"))
+                edit_lunar_bday = ce3b.text_input("農曆生日（YYYY/MM/DD）", value=get_lunar_bday(sel_order, _cust_df_7))
                 edit_btime      = ce4.text_input("出生時間（HH:MM）",       value=safe_get(sel_order,"出生時間"))
                 edit_note  = st.text_input("備註", value=safe_get(sel_order,"備註"))
 
@@ -664,6 +698,8 @@ elif page == "🔄 訂單管理":
                     orders_df.loc[sel_idx, "喜神"]     = "、".join(edit_xi)
                     orders_df.loc[sel_idx, "忌神"]     = "、".join(edit_ji)
                     save_orders(orders_df)
+                    sync_lunar_bday_to_customer(
+                        safe_get(sel_order, "客戶名稱"), str(edit_lunar_bday), _cust_df_7)
                     st.success("✅ 訂單已更新！")
                     time.sleep(1); st.rerun()
 
