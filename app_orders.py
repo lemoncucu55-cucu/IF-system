@@ -21,7 +21,7 @@ ORDER_COLUMNS = [
 CUSTOM_ITEMS = ["手鍊", "項鍊", "鑰匙圈"]
 
 CUSTOMER_COLUMNS = [
-    '客戶名稱', '客戶電話', '手圍', '喜神', '忌神', '生日', '出生時間',
+    '客戶名稱', '客戶電話', '手圍', '喜神', '忌神', '生日', '農曆生日', '出生時間',
     '流年去年', '流年今年', '流年明年', '階段數',
     '收件人姓名', '收件電話', '收件類型', '收件地址', '超商名稱門市'
 ]
@@ -753,10 +753,11 @@ elif page == "👥 客戶管理":
             new_name  = a1.text_input("客戶名稱 *")
             new_phone = a2.text_input("客戶電話")
 
-            a3, a4, a5 = st.columns(3)
-            new_wrist = a3.text_input("手圍")
-            new_bday  = a4.text_input("生日（YYYY/MM/DD）",  placeholder="例：2000/10/10")
-            new_btime = a5.text_input("出生時間（HH:MM）",  placeholder="例：08:30")
+            a3, a4, a4b, a5 = st.columns(4)
+            new_wrist       = a3.text_input("手圍")
+            new_bday        = a4.text_input("國曆生日（YYYY/MM/DD）",  placeholder="例：2000/10/10")
+            new_lunar_bday  = a4b.text_input("農曆生日（YYYY/MM/DD）", placeholder="例：2000/09/01")
+            new_btime       = a5.text_input("出生時間（HH:MM）",       placeholder="例：08:30")
 
             a6, a7 = st.columns(2)
             new_xi = a6.multiselect("喜神", WUXING_OPTS)
@@ -790,6 +791,7 @@ elif page == "👥 客戶管理":
                         "喜神":     "、".join(new_xi),
                         "忌神":     "、".join(new_ji),
                         "生日":     new_bday,
+                        "農曆生日": new_lunar_bday,
                         "出生時間":  new_btime,
                         "收件人姓名": new_recv_name,
                         "收件電話":  new_recv_phone,
@@ -860,10 +862,11 @@ elif page == "👥 客戶管理":
                 ec_name  = ec1.text_input("客戶名稱", value=safe_get(cust_row,"客戶名稱"))
                 ec_phone = ec2.text_input("客戶電話", value=safe_get(cust_row,"客戶電話"))
 
-                eb1, eb2, eb3 = st.columns(3)
-                ec_wrist = eb1.text_input("手圍",               value=safe_get(cust_row,"手圍"))
-                ec_bday  = eb2.text_input("生日（YYYY/MM/DD）", value=safe_get(cust_row,"生日"))
-                ec_btime = eb3.text_input("出生時間（HH:MM）",  value=safe_get(cust_row,"出生時間"))
+                eb1, eb2, eb2b, eb3 = st.columns(4)
+                ec_wrist      = eb1.text_input("手圍",                   value=safe_get(cust_row,"手圍"))
+                ec_bday       = eb2.text_input("國曆生日（YYYY/MM/DD）", value=safe_get(cust_row,"生日"))
+                ec_lunar_bday = eb2b.text_input("農曆生日（YYYY/MM/DD）",value=safe_get(cust_row,"農曆生日"))
+                ec_btime      = eb3.text_input("出生時間（HH:MM）",      value=safe_get(cust_row,"出生時間"))
 
                 ec3, ec4 = st.columns(2)
                 xi_v = safe_get(cust_row,"喜神")
@@ -900,6 +903,7 @@ elif page == "👥 客戶管理":
                     customers_df.loc[cust_idx,"客戶電話"]   = str(ec_phone)
                     customers_df.loc[cust_idx,"手圍"]       = str(ec_wrist)
                     customers_df.loc[cust_idx,"生日"]       = str(ec_bday)
+                    customers_df.loc[cust_idx,"農曆生日"]   = str(ec_lunar_bday)
                     customers_df.loc[cust_idx,"出生時間"]   = str(ec_btime)
                     customers_df.loc[cust_idx,"喜神"]       = "、".join(ec_xi)
                     customers_df.loc[cust_idx,"忌神"]       = "、".join(ec_ji)
@@ -950,8 +954,10 @@ elif page == "🔗 關係鏈結":
                         col3.write(f"**喜神：** {safe_get(c,'喜神') or '-'}")
                         col4.write(f"**忌神：** {safe_get(c,'忌神') or '-'}")
                         bday = safe_get(c, "生日")
+                        lunar_bday = safe_get(c, "農曆生日")
                         if bday:
-                            st.caption(f"🎂 {bday}　流年今年：{safe_get(c,'流年今年') or '-'}　階段數：{safe_get(c,'階段數') or '-'}")
+                            lunar_info = f"　🌙 農曆：{lunar_bday}" if lunar_bday else ""
+                            st.caption(f"🎂 國曆：{bday}{lunar_info}　流年今年：{safe_get(c,'流年今年') or '-'}　階段數：{safe_get(c,'階段數') or '-'}")
 
             st.subheader(f"🔗 {sel_name} 的所有關係")
             if my_rels.empty:
@@ -973,8 +979,9 @@ elif page == "🔗 關係鏈結":
                             col1.write(f"**電話：** {safe_get(tc,'客戶電話') or '-'}")
                             col2.write(f"**手圍：** {safe_get(tc,'手圍') or '-'}")
                             tbday = safe_get(tc, "生日")
+                            tlunar = safe_get(tc, "農曆生日")
                             if tbday:
-                                render_numerology_table(tbday)
+                                render_numerology_table(tbday, tlunar)
                             else:
                                 st.caption("此客戶尚無生日資料")
                         else:
