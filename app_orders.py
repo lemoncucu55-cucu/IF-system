@@ -123,10 +123,10 @@ def render_numerology_table(bday_str, lunar_bday_str=""):
     # 並排顯示國曆 / 農曆五階段數
     col_solar, col_lunar = st.columns(2)
     with col_solar:
-        st.markdown(f"**🌞 國曆階段數：** `{jd_final}`　（{by}年 + {bm}月 → {jieduan}）")
+        st.markdown(f"**🌞 國曆階段數：** {jd_final}　（{by}年 + {bm}月 → {jieduan}）")
     with col_lunar:
         if lunar_parsed:
-            st.markdown(f"**🌙 農曆階段數：** `{lunar_jd_final}`　（{ly}年 + {lm}月 → {lunar_jieduan}）")
+            st.markdown(f"**🌙 農曆階段數：** {lunar_jd_final}　（{ly}年 + {lm}月 → {lunar_jieduan}）")
         else:
             st.markdown("**🌙 農曆階段數：** *未填寫農曆生日*")
 
