@@ -44,6 +44,7 @@ def _digit_sum(n):
     return sum(int(d) for d in str(n))
 
 def _reduce_chain(n):
+    """持續縮減到個位，回傳過程列表，例如 19 → [19, 10, 1]"""
     chain = [n]
     while n >= 10:
         n = _digit_sum(n)
@@ -51,18 +52,34 @@ def _reduce_chain(n):
     return chain
 
 def calc_liunian(year, birth_month, birth_day):
+    """
+    流年 = 年份所有數字 + 生日月數字 + 生日日數字，全部相加後縮減
+    例：2025/10/10 → 2+0+2+5+1+0+1+0 = 11 → 1+1 = 2，顯示 "11/2"
+    """
     digits_str = str(year) + str(birth_month) + str(birth_day)
     total = sum(int(d) for d in digits_str)
     chain = _reduce_chain(total)
     return "/".join(str(x) for x in chain)
 
 def calc_jieduan(birth_year, birth_month):
+    """
+    階段數 = 出生年所有數字 + 生日月數字，全部相加後縮減（個人固定數）
+    例：2000/10 → 2+0+0+0+1+0 = 3，顯示 "3"
+    """
     digits_str = str(birth_year) + str(birth_month)
     total = sum(int(d) for d in digits_str)
     chain = _reduce_chain(total)
     return "/".join(str(x) for x in chain)
 
 def personal_year_range(birth_month, birth_day, today=None):
+    """
+    依生日是否已過決定三個年份（去年/今年/明年，以個人年為基準）
+    ・尚未過生日 → 個人年 = 本曆年 - 1
+    ・已過生日   → 個人年 = 本曆年
+    範例（今天 2026-04-28）：
+      生日 10/10 → 尚未過 → 個人年 2025 → 顯示 [2024, 2025, 2026]
+      生日  3/01 → 已過   → 個人年 2026 → 顯示 [2025, 2026, 2027]
+    """
     if today is None:
         today = datetime.now().date()
     birthday_passed = (today.month, today.day) >= (birth_month, birth_day)
@@ -70,6 +87,7 @@ def personal_year_range(birth_month, birth_day, today=None):
     return [personal_year - 1, personal_year, personal_year + 1]
 
 def parse_birthday(bday_str):
+    """解析生日字串（YYYY/MM/DD 或 YYYY-MM-DD），回傳 (year, month, day) 或 None"""
     if not bday_str or not str(bday_str).strip():
         return None
     for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
@@ -81,6 +99,8 @@ def parse_birthday(bday_str):
     return None
 
 def render_numerology_table(bday_str, lunar_bday_str=""):
+    """根據生日字串顯示三年流年 × 階段數對照表，成功回傳 True
+    可選傳入 lunar_bday_str（農曆生日）並排顯示農曆五階段數"""
     parsed = parse_birthday(bday_str)
     if not parsed:
         st.warning("⚠️ 生日格式錯誤，請使用 YYYY/MM/DD（例：2000/10/10）")
@@ -91,6 +111,7 @@ def render_numerology_table(bday_str, lunar_bday_str=""):
     jieduan = calc_jieduan(by, bm)
     jd_final = jieduan.split("/")[-1]
 
+    # 農曆五階段數
     lunar_parsed = parse_birthday(lunar_bday_str) if lunar_bday_str else None
     lunar_jd_final = ""
     lunar_jieduan  = ""
@@ -99,6 +120,7 @@ def render_numerology_table(bday_str, lunar_bday_str=""):
         lunar_jieduan  = calc_jieduan(ly, lm)
         lunar_jd_final = lunar_jieduan.split("/")[-1]
 
+    # 並排顯示國曆 / 農曆五階段數
     col_solar, col_lunar = st.columns(2)
     with col_solar:
         st.markdown(f"**🌞 國曆階段數：** `{jd_final}`　（{by}年 + {bm}月 → {jieduan}）")
@@ -186,10 +208,16 @@ def _save_sheet(tab, df):
         st.error(f"儲存 {tab} 失敗: {e}")
 
 def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    根據每列的「生日」欄位，自動填入：
+      流年去年 / 流年今年 / 流年明年 / 階段數
+    沒有生日或格式錯誤時留空。
+    """
     df = df.copy()
     for col in ["流年去年", "流年今年", "流年明年", "階段數"]:
         if col not in df.columns:
             df[col] = ""
+
     for idx, row in df.iterrows():
         bday_str = str(row.get("生日", "")).strip()
         parsed = parse_birthday(bday_str)
@@ -197,7 +225,7 @@ def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
             df.loc[idx, ["流年去年", "流年今年", "流年明年", "階段數"]] = ""
             continue
         by, bm, bd = parsed
-        years = personal_year_range(bm, bd)
+        years = personal_year_range(bm, bd)          # [去年, 今年, 明年]
         df.loc[idx, "流年去年"] = calc_liunian(years[0], bm, bd)
         df.loc[idx, "流年今年"] = calc_liunian(years[1], bm, bd)
         df.loc[idx, "流年明年"] = calc_liunian(years[2], bm, bd)
@@ -212,6 +240,7 @@ def load_relationships():   return _load_sheet("Relationships", RELATIONSHIP_COL
 def save_relationships(df): _save_sheet("Relationships", df)
 
 def get_customer_relations(name: str, rel_df: pd.DataFrame) -> pd.DataFrame:
+    """取得某客戶所有關係（含正向與反向）"""
     if rel_df.empty or not name:
         return pd.DataFrame(columns=["對象", "關係類型", "備註", "建立時間"])
     rows = []
@@ -229,6 +258,7 @@ def generate_order_id():
     return f"ORD-{datetime.now().strftime('%m%d%H%M%S')}"
 
 def safe_get(row, col, default=""):
+    """安全取得 Series 欄位值，避免 KeyError"""
     try:
         val = row[col]
         return val if pd.notna(val) and str(val).strip() else default
@@ -236,16 +266,24 @@ def safe_get(row, col, default=""):
         return default
 
 def sync_customers_from_orders():
+    """
+    掃描 Orders 表，將尚未存在於 Customers 表的客戶自動新增進去。
+    已存在的客戶不覆蓋。回傳新增數量。
+    """
     orders_df    = load_orders()
     customers_df = load_customers()
+
     if orders_df.empty:
         return 0
+
     existing_names = set(customers_df["客戶名稱"].tolist())
     new_rows = []
+
+    # 對每個客戶名稱，取最新一筆訂單的資料
     for name, group in orders_df.groupby("客戶名稱"):
         if not name or name in existing_names:
             continue
-        latest = group.iloc[-1]
+        latest = group.iloc[-1]  # 最新訂單
         new_rows.append({
             "客戶名稱":  name,
             "客戶電話":  safe_get(latest, "客戶電話"),
@@ -260,10 +298,12 @@ def sync_customers_from_orders():
             "收件地址":  "",
             "超商名稱門市": "",
         })
+
     if new_rows:
         customers_df = pd.concat(
             [customers_df, pd.DataFrame(new_rows)], ignore_index=True)
         save_customers(customers_df)
+
     return len(new_rows)
 
 # ==========================================
@@ -288,6 +328,7 @@ with st.sidebar:
         get_gs_client.clear()
         st.rerun()
 
+    # ── 未出貨提醒 ──
     st.divider()
     _all_orders_sb = load_orders()
     _unshipped_sb  = _all_orders_sb[
@@ -512,6 +553,7 @@ elif page == "🔄 訂單管理":
     st.header("🔄 訂單管理")
     orders_df = load_orders()
 
+    # ── 未出貨提醒 Banner ──
     if not orders_df.empty:
         unshipped = orders_df[orders_df["狀態"].isin(["待確認", "已確認"])].copy()
         if not unshipped.empty:
@@ -546,12 +588,21 @@ elif page == "🔄 訂單管理":
             order_id  = sel_order["訂單編號"]
 
             with st.container(border=True):
-                c1, c2, c3, c4 = st.columns(4)
+                c1, c2, c3, c4, c5 = st.columns(5)
                 c1.metric("訂單編號", order_id)
                 c2.metric("客戶",    safe_get(sel_order, "客戶名稱"))
                 price_v = safe_get(sel_order, "總售價")
                 c3.metric("總售價",  f"${float(price_v):,.2f}" if price_v else "$0")
                 c4.metric("目前狀態", safe_get(sel_order, "狀態"))
+                # 計算客戶年齡
+                _bday_age = parse_birthday(safe_get(sel_order, "生日"))
+                if _bday_age:
+                    _today = datetime.now().date()
+                    _age = _today.year - _bday_age[0] - (
+                        (_today.month, _today.day) < (_bday_age[1], _bday_age[2]))
+                    c5.metric("客戶年齡", f"{_age} 歲")
+                else:
+                    c5.metric("客戶年齡", "—")
 
                 st.write(
                     f"**電話：** {safe_get(sel_order,'客戶電話') or '-'} | "
@@ -682,12 +733,13 @@ elif page == "👥 客戶管理":
     tab1, tab2 = st.tabs(["➕ 新增客戶", "✏️ 查看 / 編輯客戶"])
 
     with tab1:
+        # ── 從訂單自動匯入 ──
         with st.container(border=True):
             st.markdown("#### 🔃 從訂單資料自動匯入客戶")
             st.caption("掃描所有訂單，將尚未建檔的客戶自動加入客戶資料表（已存在的不覆蓋）")
             if st.button("立即同步", type="primary", use_container_width=True):
                 added = sync_customers_from_orders()
-                customers_df = load_customers()
+                customers_df = load_customers()   # 重新載入
                 if added:
                     st.success(f"✅ 已從訂單匯入 {added} 位新客戶！")
                 else:
@@ -778,6 +830,7 @@ elif page == "👥 客戶管理":
             else:
                 st.info("ℹ️ 請填寫生日後，系統將自動計算三年流年與階段數。")
 
+            # 顯示收件資料摘要
             recv_type = safe_get(cust_row, "收件類型")
             recv_addr = safe_get(cust_row, "收件地址")
             recv_name = safe_get(cust_row, "收件人姓名")
@@ -795,6 +848,7 @@ elif page == "👥 客戶管理":
                     if recv_addr:
                         st.write(f"**地址：** {recv_addr}")
 
+            # 顯示關係鏈結摘要
             my_rels = get_customer_relations(sel_cust, rel_df_mgmt)
             if not my_rels.empty:
                 st.markdown("#### 🔗 關係鏈結")
@@ -876,6 +930,7 @@ elif page == "🔗 關係鏈結":
 
     tab_view, tab_add, tab_all = st.tabs(["👤 查詢客戶關係", "➕ 新增關係", "📋 所有關係清單"])
 
+    # ── 查詢單一客戶的所有關係 ──
     with tab_view:
         if not cust_names:
             st.info("尚未建立任何客戶資料。")
@@ -883,6 +938,7 @@ elif page == "🔗 關係鏈結":
             sel_name = st.selectbox("選擇客戶", cust_names, key="rel_view_sel")
             my_rels  = get_customer_relations(sel_name, rel_df)
 
+            # 顯示此客戶基本資訊
             if not customers_df.empty:
                 crow = customers_df[customers_df["客戶名稱"] == sel_name]
                 if not crow.empty:
@@ -904,6 +960,7 @@ elif page == "🔗 關係鏈結":
                 st.dataframe(my_rels, use_container_width=True, hide_index=True)
                 st.caption(f"共 {len(my_rels)} 條關係")
 
+                # 顯示每位關聯客戶的數字學資訊
                 st.divider()
                 st.subheader("📊 關聯客戶數字學對照")
                 for _, rel_row in my_rels.iterrows():
@@ -923,9 +980,13 @@ elif page == "🔗 關係鏈結":
                         else:
                             st.caption("此關聯客戶不在客戶資料庫中")
 
+                # 刪除關係
                 st.divider()
                 st.subheader("🗑️ 刪除關係")
-                del_opts = [f"{r['對象']}（{r['關係類型']}）" for _, r in my_rels.iterrows()]
+                del_opts = [
+                    f"{r['對象']}（{r['關係類型']}）"
+                    for _, r in my_rels.iterrows()
+                ]
                 del_sel = st.selectbox("選擇要刪除的關係", del_opts, key="rel_del_sel")
                 if st.button("🗑️ 確認刪除", type="secondary"):
                     del_target = del_sel.split("（")[0]
@@ -937,6 +998,7 @@ elif page == "🔗 關係鏈結":
                     st.success(f"✅ 已刪除與「{del_target}」的關係")
                     time.sleep(1); st.rerun()
 
+    # ── 新增關係 ──
     with tab_add:
         if len(cust_names) < 2:
             st.info("至少需要 2 位客戶才能建立關係。")
@@ -946,6 +1008,7 @@ elif page == "🔗 關係鏈結":
                 col1, col2 = st.columns(2)
                 cust_a = col1.selectbox("客戶 A", cust_names, key="rel_a")
                 cust_b = col2.selectbox("客戶 B", cust_names, key="rel_b")
+
                 rel_type = st.selectbox("關係類型", RELATION_TYPES)
                 rel_note = st.text_input("備註（選填）", placeholder="例：同年入會、朋友介紹")
 
@@ -953,6 +1016,7 @@ elif page == "🔗 關係鏈結":
                     if cust_a == cust_b:
                         st.error("❌ 不能將同一位客戶與自己連結")
                     else:
+                        # 防止重複（雙向）
                         dup = rel_df[
                             ((rel_df["客戶A"] == cust_a) & (rel_df["客戶B"] == cust_b)) |
                             ((rel_df["客戶A"] == cust_b) & (rel_df["客戶B"] == cust_a))
@@ -972,6 +1036,7 @@ elif page == "🔗 關係鏈結":
                             st.success(f"✅ 已建立：{cust_a} ⟷ {cust_b}（{rel_type}）")
                             time.sleep(1.5); st.rerun()
 
+    # ── 所有關係清單 ──
     with tab_all:
         st.subheader("所有關係清單")
         if rel_df.empty:
@@ -999,9 +1064,13 @@ elif page == "🔢 數字學計算":
     with col_a:
         with st.container(border=True):
             st.subheader("輸入生日")
-            input_bday  = st.text_input("生日（YYYY/MM/DD）", value="2000/10/10", placeholder="例：2000/10/10")
-            input_btime = st.text_input("出生時間（HH:MM，選填）", placeholder="例：08:30")
+            input_bday  = st.text_input("生日（YYYY/MM/DD）",
+                                        value="2000/10/10",
+                                        placeholder="例：2000/10/10")
+            input_btime = st.text_input("出生時間（HH:MM，選填）",
+                                        placeholder="例：08:30")
 
+            # 也可從客戶名單快速選入
             customers_df = load_customers()
             if not customers_df.empty:
                 st.divider()
@@ -1022,6 +1091,7 @@ elif page == "🔢 數字學計算":
                 labels = ["去年", "今年", "明年"]
                 today  = datetime.now().date()
 
+                # 判斷是否已過生日說明
                 passed = (today.month, today.day) >= (bm, bd)
                 bday_desc = f"生日 {bm}/{bd} 今年{'已過 ✅' if passed else '尚未到 ⏳'}"
                 st.info(f"📅 {bday_desc}｜個人年基準：{years[1]} 年")
@@ -1029,6 +1099,7 @@ elif page == "🔢 數字學計算":
                 st.subheader("📊 三年流年 × 階段數對照表")
                 render_numerology_table(input_bday)
 
+                # 詳細計算說明
                 st.divider()
                 st.subheader("📐 詳細計算過程")
                 for yr, lbl in zip(years, labels):
