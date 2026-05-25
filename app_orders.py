@@ -1,3 +1,145 @@
+
+
+Ran a command, read a file
+이제 모든 위치를 수정하겠습니다:
+
+Edited
+app_orders.py
++3
+-5
+✅ 全部改好了！
+
+修改摘要：
+
+「客製品項」下拉選單 → 改成「品項」自由輸入欄位（3 個地方都改了）
+現在重新上傳 app_orders.py 到 GitHub 就會生效 🎉
+
+增加農曆生日的五階段數,和國曆生日並排,手動輸入農曆生日,使用和國曆生日的五階段數計算公式
+
+
+Ran 2 commands, read a file
+現在我了解結構了。我需要：
+
+在表單加入「農曆生日」輸入欄
+修改 render_numerology_table 同時顯示國曆和農曆的五階段數並排
+Read
+app_orders.py
+(186–215, 340–389)
+現在我清楚整體結構了。我需要：
+
+在 render_numerology_table 加入農曆並排顯示
+在建立訂單、編輯訂單表單加入「農曆生日」輸入欄
+在 ORDER_COLUMNS 加入「農曆生日」欄位
+Read
+app_orders.py
+(440–519, 560–639)
+現在我有足夠的資訊了。我要修改 app_orders.py（在 IF Crystal Report 資料夾，這是原版），但用戶要的是修改 Newnumbertalk2.0 資料夾的版本。讓我先確認 Newnumbertalk2.0 的 app_orders.py 存在：
+
+
+Ran 3 commands
+這個檔案是庫存系統，不是訂單系統！原本我複製過來的 app_orders.py 不見了。
+
+讓我確認一下：
+
+Ran
+ls -la "/Volumes/1主要外接/Newnumbertalk2.0/"
+app_orders.py 已經不在了（可能被你重新命名成 app_orders_latest.py）。
+
+我要對 IF Crystal Report 資料夾裡的 app_orders.py 進行農曆生日修改，然後再複製到 Newnumbertalk2.0。
+
+以下是修改計畫：
+
+修改 render_numerology_table — 加入農曆並排顯示
+在建立訂單表單加入「農曆生日」欄
+在 ORDER_COLUMNS 加入「農曆生日」
+開始修改：
+
+Edited
+app_orders.py
++33
+-9
+現在加入 ORDER_COLUMNS 的「農曆生日」欄位：
+
+Edited
+app_orders.py
++1
+-1
+現在修改建立訂單表單，在生日旁加入農曆生日輸入欄：
+
+Edited
+app_orders.py
++8
+-6
+現在找到建立訂單的 save 區塊，加入農曆生日：
+
+
+Read a file, edited a file
+現在修改建立訂單時的 render_numerology_table 呼叫，傳入農曆生日：
+
+
+Read a file, edited a file
+現在修改訂單列表和訂單管理中的 render_numerology_table 呼叫：
+
+
+Ran a command, read a file, edited a file
+現在修改訂單列表和客戶管理的其他呼叫位置，並在編輯表單加入農曆生日欄位：
+
+
+Read a file, edited a file
+現在修改訂單列表的編輯表單，加入農曆生日欄位：
+
+
+Read a file, edited a file
+現在在 save 區塊加入農曆生日：
+
+
+Read a file, edited a file
+最後修改訂單管理編輯表單：
+
+
+Read a file, edited a file
+現在複製到 Newnumbertalk2.0 資料夾：
+
+Ran
+cp "/Volumes/1主要外接/IF Crystal Report/app_orders.py" "/Volumes/1主要外接/Newnumbertalk2.0/app_orders.py" && echo "✅ 複製完成"
+✅ 全部修改完成！
+
+修改摘要
+新增功能：
+農曆生日輸入欄（YYYY/MM/DD 格式）出現在國曆生日旁邊
+五階段數並排顯示：
+🌞 國曆階段數
+🌙 農曆階段數（如未填寫會顯示「未填寫農曆生日」）
+流年表格也會新增「農曆階段數計算」和「農曆階段數」欄
+修改位置：
+建立訂單、訂單列表編輯、訂單管理編輯（3 個表單都有農曆生日欄）
+ORDER_COLUMNS 加入「農曆生日」欄位
+接下來：
+把 app_orders.py 上傳到 GitHub 就會生效！
+
+'/Volumes/1主要外接/IF Crystal庫存系統' 
+是在這裡面的檔案嗎
+
+不是！這個資料夾是庫存系統，不同的系統。
+
+我們修改的訂單系統檔案在這裡：
+
+系統	資料夾	主要檔案
+訂單系統（我們在改的）	IF Crystal Report	app_orders.py
+庫存系統（你截圖的）	IF Crystal庫存系統	app.py
+新品牌訂單系統	Newnumbertalk2.0	app_orders.py
+你要找的是 IF Crystal Report 資料夾裡的 app_orders.py ✅
+
+'/Volumes/1主要外接/IF Crystal Report'
+這裡的嗎
+
+對！就是這裡的 app_orders.py ✅
+
+這個就是我們一直在修改的訂單系統主程式。
+
+現在你要把這個 app_orders.py 上傳到 GitHub 的 newnumbertalk2.0 repo，這樣 Streamlit 才會更新 🎉
+
+以下是我目前看到的程式碼,內容如下:
 import streamlit as st
 import pandas as pd
 import gspread
@@ -123,10 +265,10 @@ def render_numerology_table(bday_str, lunar_bday_str=""):
     # 並排顯示國曆 / 農曆五階段數
     col_solar, col_lunar = st.columns(2)
     with col_solar:
-        st.markdown(f"**🌞 國曆階段數：** `{jd_final}`　（{by}年 + {bm}月 → {jieduan}）")
+        st.markdown(f"**🌞 國曆階段數：** {jd_final}　（{by}年 + {bm}月 → {jieduan}）")
     with col_lunar:
         if lunar_parsed:
-            st.markdown(f"**🌙 農曆階段數：** `{lunar_jd_final}`　（{ly}年 + {lm}月 → {lunar_jieduan}）")
+            st.markdown(f"**🌙 農曆階段數：** {lunar_jd_final}　（{ly}年 + {lm}月 → {lunar_jieduan}）")
         else:
             st.markdown("**🌙 農曆階段數：** *未填寫農曆生日*")
 
@@ -1122,3 +1264,63 @@ elif page == "🔢 數字學計算":
                 st.error("⚠️ 生日格式錯誤，請輸入 YYYY/MM/DD（例：2000/10/10）")
         else:
             st.info("👈 請在左側輸入生日")
+
+我看了你貼的程式碼，有幾個地方還沒更新到：
+
+標題還是 IF Crystal → 需要改成 NewNumbertalk2.0
+客製品項還是下拉選單 → 需要改成手動輸入
+這兩個地方我來幫你改，請把以下內容替換掉：
+
+第 1 處： 把這段
+
+st.set_page_config(page_title="IF Crystal 訂單系統", layout="wide", page_icon="📋")
+st.title("💎 IF Crystal 訂單系統")
+
+with st.sidebar:
+    st.title("💎 IF Crystal")
+    st.caption("訂單管理系統 — 所有人皆可使用")
+改成：
+
+st.set_page_config(page_title="NewNumbertalk2.0 訂單系統", layout="wide", page_icon="🔢")
+st.title("🔢 NewNumbertalk2.0 訂單系統")
+
+with st.sidebar:
+    st.title("🔢 NewNumbertalk2.0")
+    st.caption("訂單管理系統 — 所有人皆可使用")
+第 2 處： 把這段
+
+        custom_item   = c4.selectbox("客製品項", CUSTOM_ITEMS)
+改成：
+
+        custom_item   = c4.text_input("品項", placeholder="例：手鍊、項鍊、鑰匙圈")
+其餘的農曆生日功能都已經有了 ✅
+
+改好後上傳到 GitHub 就完成了！
+
+這個標題是對的,IF Crystal和NewNumbertalk2.0是兩個品牌
+
+了解！所以：
+
+IF Crystal 的 app_orders.py → 保持 IF Crystal 標題 ✅
+NewNumbertalk2.0 的 app_orders.py → 改成 NewNumbertalk2.0 標題
+你現在貼給我的這個程式碼是哪個品牌的版本？是要上傳到 newnumbertalk2.0 GitHub repo 的嗎？
+
+這個是要給IF Crystal的訂單系統使用的 https://if-system-order.streamlit.app/#d959ae7d
+
+了解！這個是 IF Crystal 的訂單系統。
+
+所以目前狀態是：
+
+品牌	GitHub Repo	Streamlit URL	狀態
+IF Crystal	ifcrystal-report（原本的）	if-system-order.streamlit.app	✅ 已有
+NewNumbertalk2.0	newnumbertalk2.0	待部署	🔧 進行中
+所以你現在需要：
+
+把我們修改好的 app_orders.py（含農曆生日功能）上傳到 IF Crystal 的 GitHub repo
+另外再複製一份，把 SHEET_ID 和標題改成 NewNumbertalk2.0 的版本，上傳到 newnumbertalk2.0 repo
+IF Crystal 的 GitHub repo 名稱是什麼？ 是 ifcrystal-report 還是其他名稱？
+
+IF-system
+
+
+
