@@ -874,10 +874,21 @@ elif page == "📦 訂單領料":
     if orders_df.empty:
         st.info("目前沒有任何訂單。")
     else:
-        # 只顯示進行中的訂單（待確認、已確認）
-        active_pick = orders_df[orders_df["狀態"].isin(["待確認", "已確認", "已出貨"])].copy()
+        # 篩選狀態
+        pick_status_filter = st.selectbox(
+            "篩選訂單狀態", ["進行中", "已完成", "已取消", "全部"],
+            key="pick_status_filter")
+        if pick_status_filter == "進行中":
+            active_pick = orders_df[orders_df["狀態"].isin(["待確認", "已確認", "已出貨"])].copy()
+        elif pick_status_filter == "已完成":
+            active_pick = orders_df[orders_df["狀態"] == "已完成"].copy()
+        elif pick_status_filter == "已取消":
+            active_pick = orders_df[orders_df["狀態"] == "已取消"].copy()
+        else:
+            active_pick = orders_df.copy()
+
         if active_pick.empty:
-            st.success("🎉 目前沒有進行中的訂單需要領料。")
+            st.info("此狀態下沒有訂單。")
         else:
             active_pick["display"] = active_pick.apply(
                 lambda r: f"[{r['狀態']}] {r['訂單編號']} — {r['客戶名稱']} | {r['客製品項']}", axis=1)
