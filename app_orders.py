@@ -207,6 +207,16 @@ def render_numerology_table(bday_str, lunar_bday_str="", birth_time_str=""):
     cur_stage = solar_stages[cur_idx]
     st.markdown(f"**📊 五大階段數**　｜　目前年齡：**{age}歲**（{cur_stage['name']}）")
 
+    # 各階段對應的生日部位
+    hour, minute = parse_time(btime)
+    solar_parts = [str(by), str(bm).zfill(2), str(bd).zfill(2),
+                   hour or "—", minute or "—"]
+    lunar_parts = None
+    if lunar_parsed:
+        lunar_parts = [str(ly), str(lm).zfill(2), str(ld).zfill(2),
+                       hour or "—", minute or "—"]
+    part_labels = ["西元年", "月", "日", "時", "分"]
+
     cols = st.columns(5)
     for i, col in enumerate(cols):
         s = solar_stages[i]
@@ -218,11 +228,13 @@ def render_numerology_table(bday_str, lunar_bday_str="", birth_time_str=""):
                 st.markdown(f"**{s['name']}**")
             st.caption(s['age'])
             solar_disp = f"**{s['display']}**" if is_cur else s['display']
-            st.markdown(f"🌞 {solar_disp}")
-            if lunar_stages:
+            st.markdown(f"🌞 國曆{part_labels[i]}：{solar_parts[i]}")
+            st.markdown(f"　　{solar_disp}")
+            if lunar_stages and lunar_parts:
                 ls = lunar_stages[i]
                 lunar_disp = f"**{ls['display']}**" if is_cur else ls['display']
-                st.markdown(f"🌙 {lunar_disp}")
+                st.markdown(f"🌙 農曆{part_labels[i]}：{lunar_parts[i]}")
+                st.markdown(f"　　{lunar_disp}")
 
     if not btime:
         st.caption("💡 填寫「出生時間」可計算少年與幼年階段數")
