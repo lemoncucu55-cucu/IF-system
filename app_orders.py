@@ -1006,7 +1006,7 @@ elif page == "📦 訂單領料":
                     for _, irow in filtered_inv.iterrows():
                         inv_options.append(
                             f"{irow['編號']} — {irow['名稱']} ({irow['形狀']} {irow['寬度mm']}mm) "
-                            f"[庫存:{irow['庫存(顆)']}] 單價:${_safe_float(irow['成本單價']):,.0f}")
+                            f"[庫存:{irow['庫存(顆)']}] 單價:${_safe_float(irow['成本單價']):,.2f}")
                     sel_inv_item = st.selectbox("選擇庫存品項", inv_options, key="pick_inv_sel")
 
                     pk1, pk2 = st.columns([1, 2])
@@ -1030,7 +1030,7 @@ elif page == "📦 訂單領料":
                             new_mat_cost = calc_order_material_cost(pick_order_id, items_df)
                             orders_df.loc[sel_pick_idx, "成本"] = str(new_mat_cost)
                             save_orders(orders_df)
-                            st.success(f"✅ 已領取 {inv_row['名稱']} x{pick_qty}（成本 ${_safe_float(inv_row['成本單價']) * pick_qty:,.0f}）")
+                            st.success(f"✅ 已領取 {inv_row['名稱']} x{pick_qty}（成本 ${_safe_float(inv_row['成本單價']) * pick_qty:,.2f}）")
                             time.sleep(1); st.rerun()
 
             # ── 此訂單的歷史紀錄 ──
