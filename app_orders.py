@@ -75,15 +75,86 @@ def calc_liunian(year, birth_month, birth_day):
     chain = _reduce_chain(total)
     return "/".join(str(x) for x in chain)
 
-def calc_jieduan(birth_year, birth_month):
+def parse_time(time_str):
+    """解析出生時間字串，回傳 (時, 分) 零補齊字串，例如 '8:30' → ('08', '30')"""
+    if not time_str or not str(time_str).strip():
+        return "", ""
+    t = str(time_str).strip().replace("：", ":")
+    if ":" in t:
+        parts = t.split(":")
+        h = parts[0].strip().zfill(2)
+        m = parts[1].strip().zfill(2) if len(parts) > 1 and parts[1].strip() else "00"
+        return h, m
+    digits = ''.join(c for c in t if c.isdigit())
+    if len(digits) >= 4:
+        return digits[:2], digits[2:4]
+    if len(digits) >= 2:
+        return digits[:2], "00"
+    return "", ""
+
+STAGE_DEFS = [
+    ("老年階段", "61歲以上"),
+    ("中年階段", "41~60歲"),
+    ("青年階段", "21~40歲"),
+    ("少年階段", "11~20歲"),
+    ("幼年階段", "0~10歲"),
+]
+
+def calc_five_stages(year, month, day, time_str=""):
     """
-    階段數 = 出生年所有數字 + 生日月數字，全部相加後縮減（個人固定數）
-    例：2000/10 → 2+0+0+0+1+0 = 3，顯示 "3"
+    計算五大階段數（生命藍圖數字學）
+    第1階段（老年）：西元年
+    第2階段（中年）：西元年 + 月
+    第3階段（青年）：西元年 + 月 + 日
+    第4階段（少年）：西元年 + 月 + 日 + 時
+    第5階段（幼年）：西元年 + 月 + 日 + 時 + 分
+    月/日/時/分 皆以兩位數計算（例：8月 → 08）
+    回傳長度 5 的 list，每項為 dict: {name, age, digits_str, total, reduced, display}
     """
-    digits_str = str(birth_year) + str(birth_month)
-    total = sum(int(d) for d in digits_str)
-    chain = _reduce_chain(total)
-    return "/".join(str(x) for x in chain)
+    hour, minute = parse_time(time_str)
+    y = str(year)
+    m = str(month).zfill(2)
+    d = str(day).zfill(2)
+
+    digit_parts = [
+        y,                                              # 老年：年
+        y + m,                                          # 中年：年+月
+        y + m + d,                                      # 青年：年+月+日
+        (y + m + d + hour) if hour else None,           # 少年：年+月+日+時
+        (y + m + d + hour + minute) if (hour and minute) else None,  # 幼年：全部
+    ]
+
+    results = []
+    for i, (name, age) in enumerate(STAGE_DEFS):
+        ds = digit_parts[i]
+        if ds:
+            total = sum(int(c) for c in ds)
+            chain = _reduce_chain(total)
+            reduced = chain[-1]
+            display = "/".join(str(x) for x in chain)
+        else:
+            ds, total, reduced, display = None, None, None, "—"
+        results.append({"name": name, "age": age, "digits_str": ds,
+                        "total": total, "reduced": reduced, "display": display})
+    return results
+
+def get_current_stage_index(birth_year, birth_month, birth_day):
+    """根據目前年齡回傳階段 index (0=老年 1=中年 2=青年 3=少年 4=幼年)"""
+    today = datetime.now().date()
+    age = today.year - birth_year
+    if (today.month, today.day) < (birth_month, birth_day):
+        age -= 1
+    if age <= 10:  return 4
+    if age <= 20:  return 3
+    if age <= 40:  return 2
+    if age <= 60:  return 1
+    return 0
+
+def get_current_jieduan(birth_year, birth_month, birth_day, birth_time_str=""):
+    """取得目前年齡對應的階段數顯示值（供儲存到 Google Sheets）"""
+    stages = calc_five_stages(birth_year, birth_month, birth_day, birth_time_str)
+    idx = get_current_stage_index(birth_year, birth_month, birth_day)
+    return stages[idx]['display']
 
 def personal_year_range(birth_month, birth_day, today=None):
     """
@@ -112,53 +183,62 @@ def parse_birthday(bday_str):
             pass
     return None
 
-def render_numerology_table(bday_str, lunar_bday_str=""):
-    """根據生日字串顯示三年流年 × 階段數對照表，成功回傳 True
-    可選傳入 lunar_bday_str（農曆生日）並排顯示農曆五階段數"""
+def render_numerology_table(bday_str, lunar_bday_str="", birth_time_str=""):
+    """顯示五大階段數 + 三年流年對照表，成功回傳 True"""
     parsed = parse_birthday(bday_str)
     if not parsed:
         st.warning("⚠️ 生日格式錯誤，請使用 YYYY/MM/DD（例：2000/10/10）")
         return False
     by, bm, bd = parsed
-    years  = personal_year_range(bm, bd)
-    labels = ["去年", "今年", "明年"]
-    jieduan = calc_jieduan(by, bm)
-    jd_final = jieduan.split("/")[-1]
+    btime = str(birth_time_str).strip() if birth_time_str else ""
 
-    # 農曆五階段數
+    # ── 五大階段數 ──
+    solar_stages = calc_five_stages(by, bm, bd, btime)
+    cur_idx = get_current_stage_index(by, bm, bd)
+    today = datetime.now().date()
+    age = today.year - by - (1 if (today.month, today.day) < (bm, bd) else 0)
+
     lunar_parsed = parse_birthday(lunar_bday_str) if lunar_bday_str else None
-    lunar_jd_final = ""
-    lunar_jieduan  = ""
+    lunar_stages = None
     if lunar_parsed:
         ly, lm, ld = lunar_parsed
-        lunar_jieduan  = calc_jieduan(ly, lm)
-        lunar_jd_final = lunar_jieduan.split("/")[-1]
+        lunar_stages = calc_five_stages(ly, lm, ld, btime)
 
-    # 並排顯示國曆 / 農曆五階段數
-    col_solar, col_lunar = st.columns(2)
-    with col_solar:
-        st.markdown(f"**🌞 國曆階段數：** `{jd_final}`　（{by}年 + {bm}月 → {jieduan}）")
-    with col_lunar:
-        if lunar_parsed:
-            st.markdown(f"**🌙 農曆階段數：** `{lunar_jd_final}`　（{ly}年 + {lm}月 → {lunar_jieduan}）")
-        else:
-            st.markdown("**🌙 農曆階段數：** *未填寫農曆生日*")
+    cur_stage = solar_stages[cur_idx]
+    st.markdown(f"**📊 五大階段數**　｜　目前年齡：**{age}歲**（{cur_stage['name']}）")
 
+    cols = st.columns(5)
+    for i, col in enumerate(cols):
+        s = solar_stages[i]
+        with col:
+            is_cur = (i == cur_idx)
+            if is_cur:
+                st.markdown(f"🔹 **{s['name']}**")
+            else:
+                st.markdown(f"**{s['name']}**")
+            st.caption(s['age'])
+            solar_disp = f"**{s['display']}**" if is_cur else s['display']
+            st.markdown(f"🌞 {solar_disp}")
+            if lunar_stages:
+                ls = lunar_stages[i]
+                lunar_disp = f"**{ls['display']}**" if is_cur else ls['display']
+                st.markdown(f"🌙 {lunar_disp}")
+
+    if not btime:
+        st.caption("💡 填寫「出生時間」可計算少年與幼年階段數")
+
+    # ── 三年流年表 ──
+    years  = personal_year_range(bm, bd)
+    labels = ["去年", "今年", "明年"]
     rows = []
     for yr, lbl in zip(years, labels):
         ln = calc_liunian(yr, bm, bd)
         ln_final = ln.split("/")[-1]
-        row = {
-            "年份":        f"{yr}（{lbl}）",
-            "流年計算":    f"{yr}年 + {bm}月 + {bd}日 → {ln}",
-            "流年數":      ln_final,
-            "國曆階段數計算": f"{by}年 + {bm}月 → {jieduan}",
-            "國曆階段數":  jd_final,
-        }
-        if lunar_parsed:
-            row["農曆階段數計算"] = f"{ly}年 + {lm}月 → {lunar_jieduan}"
-            row["農曆階段數"]     = lunar_jd_final
-        rows.append(row)
+        rows.append({
+            "年份":     f"{yr}（{lbl}）",
+            "流年計算": f"{yr}年 + {bm}月 + {bd}日 → {ln}",
+            "流年數":   ln_final,
+        })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     return True
 
@@ -182,40 +262,50 @@ def get_gs_client():
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _load_sheet_cached(tab, columns_tuple):
-    """帶快取的 Google Sheets 讀取（120 秒內不重複呼叫 API）"""
+    """帶快取的 Google Sheets 讀取（120 秒內不重複呼叫 API）
+    注意：失敗時拋出例外（不會被快取），只快取成功結果。"""
     columns = list(columns_tuple)
+    wb = get_gs_client().open_by_key(SHEET_ID)
     try:
-        wb = get_gs_client().open_by_key(SHEET_ID)
-        try:
-            ws = wb.worksheet(tab)
-        except gspread.exceptions.WorksheetNotFound:
-            ws = wb.add_worksheet(title=tab, rows="1000", cols="20")
-            ws.update(range_name='A1', values=[columns])
-            return pd.DataFrame(columns=columns)
-        values = ws.get_all_values()
-        if not values or len(values) < 2:
-            return pd.DataFrame(columns=columns)
-        headers = [str(h).strip().replace("﻿", "") for h in values[0]]
-        final_h = []
-        for i, h in enumerate(headers):
-            if not h:          final_h.append(f"未命名_{i}")
-            elif h in final_h: final_h.append(f"{h}_{i}")
-            else:              final_h.append(h)
-        df = pd.DataFrame(values[1:], columns=final_h)
-        df = df[df.astype(str).apply(lambda x: x.str.strip() != "").any(axis=1)]
-        for col in columns:
-            if col not in df.columns:
-                df[col] = ""
-        return df[columns].copy()
-    except Exception as e:
-        st.error(f"讀取 {tab} 失敗: {e}")
+        ws = wb.worksheet(tab)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = wb.add_worksheet(title=tab, rows="1000", cols="20")
+        ws.update(range_name='A1', values=[columns])
         return pd.DataFrame(columns=columns)
+    values = ws.get_all_values()
+    if not values or len(values) < 2:
+        return pd.DataFrame(columns=columns)
+    headers = [str(h).strip().replace("﻿", "") for h in values[0]]
+    final_h = []
+    for i, h in enumerate(headers):
+        if not h:          final_h.append(f"未命名_{i}")
+        elif h in final_h: final_h.append(f"{h}_{i}")
+        else:              final_h.append(h)
+    df = pd.DataFrame(values[1:], columns=final_h)
+    df = df[df.astype(str).apply(lambda x: x.str.strip() != "").any(axis=1)]
+    for col in columns:
+        if col not in df.columns:
+            df[col] = ""
+    return df[columns].copy()
 
 def _load_sheet(tab, columns):
-    return _load_sheet_cached(tab, tuple(columns))
+    """讀取工作表，失敗時自動重連一次；仍失敗則顯示錯誤並回傳空 DataFrame"""
+    try:
+        return _load_sheet_cached(tab, tuple(columns))
+    except Exception:
+        # 第一次失敗 → 清除快取、重新授權後重試
+        try:
+            _load_sheet_cached.clear()
+            get_gs_client.clear()
+            return _load_sheet_cached(tab, tuple(columns))
+        except Exception as e2:
+            err_type = type(e2).__name__
+            err_msg  = str(e2) or "(無錯誤訊息)"
+            st.error(f"讀取 {tab} 失敗 [{err_type}]: {err_msg}")
+            return pd.DataFrame(columns=columns)
 
 def _save_sheet(tab, df):
-    try:
+    def _do_save():
         wb = get_gs_client().open_by_key(SHEET_ID)
         try:
             ws = wb.worksheet(tab)
@@ -224,10 +314,18 @@ def _save_sheet(tab, df):
         data = df.fillna("").astype(str)
         ws.clear()
         ws.update(range_name='A1', values=[data.columns.tolist()] + data.values.tolist())
-        # 儲存後清除該工作表的快取，下次讀取會取得最新資料
+    try:
+        _do_save()
         _load_sheet_cached.clear()
-    except Exception as e:
-        st.error(f"儲存 {tab} 失敗: {e}")
+    except Exception:
+        try:
+            get_gs_client.clear()
+            _load_sheet_cached.clear()
+            _do_save()
+        except Exception as e2:
+            err_type = type(e2).__name__
+            err_msg  = str(e2) or "(無錯誤訊息)"
+            st.error(f"儲存 {tab} 失敗 [{err_type}]: {err_msg}")
 
 def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -247,11 +345,12 @@ def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
             df.loc[idx, ["流年去年", "流年今年", "流年明年", "階段數"]] = ""
             continue
         by, bm, bd = parsed
+        btime_str = str(row.get("出生時間", "")).strip() if "出生時間" in row.index else ""
         years = personal_year_range(bm, bd)          # [去年, 今年, 明年]
         df.loc[idx, "流年去年"] = calc_liunian(years[0], bm, bd)
         df.loc[idx, "流年今年"] = calc_liunian(years[1], bm, bd)
         df.loc[idx, "流年明年"] = calc_liunian(years[2], bm, bd)
-        df.loc[idx, "階段數"]   = calc_jieduan(by, bm)
+        df.loc[idx, "階段數"]   = get_current_jieduan(by, bm, bd, btime_str)
     return df
 
 def _safe_float(val):
@@ -508,9 +607,10 @@ if page == "📝 建立訂單":
             prefill = customers_df[customers_df["客戶名稱"] == sel_customer].iloc[0].to_dict()
             bday_str = str(prefill.get("生日", "")).strip()
             lunar_str = str(prefill.get("農曆生日", "")).strip()
+            btime_str = str(prefill.get("出生時間", "")).strip()
             if bday_str:
                 st.markdown("#### 📊 流年 × 階段數 三年對照表")
-                render_numerology_table(bday_str, lunar_str)
+                render_numerology_table(bday_str, lunar_str, btime_str)
             else:
                 with st.container(border=True):
                     ci1, ci2, ci3, ci4 = st.columns(4)
@@ -633,9 +733,10 @@ elif page == "📋 訂單列表":
             st.write(f"**客戶：** {edit_row['客戶名稱']} | **狀態：** {edit_row['狀態']} | **建立時間：** {edit_row['建立時間']}")
             bday_val = safe_get(edit_row, "生日")
             lunar_val = get_lunar_bday(edit_row, _cust_df_6)
+            btime_val = safe_get(edit_row, "出生時間")
             if bday_val:
                 st.markdown("**📊 流年 × 階段數 三年對照表**")
-                render_numerology_table(bday_val, lunar_val)
+                render_numerology_table(bday_val, lunar_val, btime_val)
             else:
                 st.caption("ℹ️ 此訂單無生日資料，無法顯示流年計算。")
 
@@ -780,9 +881,10 @@ elif page == "🔄 訂單管理":
 
                 bday_val = safe_get(sel_order, "生日")
                 lunar_val = get_lunar_bday(sel_order, _cust_df_7)
+                btime_val = safe_get(sel_order, "出生時間")
                 if bday_val:
                     st.markdown("**📊 流年 × 階段數 三年對照表**")
-                    render_numerology_table(bday_val, lunar_val)
+                    render_numerology_table(bday_val, lunar_val, btime_val)
 
             st.divider()
             st.subheader("✏️ 修改訂單")
@@ -1177,9 +1279,10 @@ elif page == "👥 客戶管理":
 
             bday_val = safe_get(cust_row, "生日")
             lunar_val = safe_get(cust_row, "農曆生日") if "農曆生日" in cust_row.index else ""
+            btime_val = safe_get(cust_row, "出生時間") if "出生時間" in cust_row.index else ""
             if bday_val:
                 st.markdown("#### 📊 流年 × 階段數 三年對照表（自動計算）")
-                render_numerology_table(bday_val, lunar_val)
+                render_numerology_table(bday_val, lunar_val, btime_val)
             else:
                 st.info("ℹ️ 請填寫生日後，系統將自動計算三年流年與階段數。")
 
@@ -1331,8 +1434,9 @@ elif page == "🔗 關係鏈結":
                             col2.write(f"**手圍：** {safe_get(tc,'手圍') or '-'}")
                             tbday = safe_get(tc, "生日")
                             tlunar = safe_get(tc, "農曆生日")
+                            tbtime = safe_get(tc, "出生時間")
                             if tbday:
-                                render_numerology_table(tbday, tlunar)
+                                render_numerology_table(tbday, tlunar, tbtime)
                             else:
                                 st.caption("此客戶尚無生日資料")
                         else:
@@ -1454,37 +1558,40 @@ elif page == "🔢 數字學計算":
                 bday_desc = f"生日 {bm}/{bd} 今年{'已過 ✅' if passed else '尚未到 ⏳'}"
                 st.info(f"📅 {bday_desc}｜個人年基準：{years[1]} 年")
 
-                st.subheader("📊 三年流年 × 階段數對照表")
-                render_numerology_table(input_bday)
+                st.subheader("📊 五大階段數 × 三年流年對照表")
+                render_numerology_table(input_bday, "", input_btime)
 
                 # 詳細計算說明
                 st.divider()
                 st.subheader("📐 詳細計算過程")
+
+                # 流年計算（每年一個 expander）
                 for yr, lbl in zip(years, labels):
                     ln = calc_liunian(yr, bm, bd)
                     ln_steps = " → ".join(str(x) for x in _reduce_chain(
                         sum(int(d) for d in (str(yr)+str(bm)+str(bd)))))
-                    jd = calc_jieduan(by, bm)
-                    jd_steps = " → ".join(str(x) for x in _reduce_chain(
-                        sum(int(d) for d in (str(by)+str(bm)))))
+                    with st.expander(f"流年 {yr}（{lbl}）= {ln.split('/')[-1]}"):
+                        st.markdown(
+                            f"- 年份 {yr} + 月 {bm} + 日 {bd}\n"
+                            f"- 各位數字：{' + '.join(list(str(yr)+str(bm)+str(bd)))} "
+                            f"= {sum(int(d) for d in str(yr)+str(bm)+str(bd))}\n"
+                            f"- 縮減過程：{ln_steps}\n"
+                            f"- **結果：{ln.split('/')[-1]}**")
 
-                    with st.expander(f"{yr}（{lbl}）— 流年 {ln.split('/')[-1]}，階段 {jd.split('/')[-1]}"):
-                        st.markdown(f"""
-**流年計算：**
-- 年份 {yr} + 月 {bm} + 日 {bd}
-- 各位數字：{' + '.join(list(str(yr)+str(bm)+str(bd)))} = {sum(int(d) for d in str(yr)+str(bm)+str(bd))}
-- 縮減過程：{ln_steps}
-- **結果：{ln.split('/')[-1]}**
-
-**階段數計算（個人固定數）：**
-- 出生年 {by} + 月 {bm}
-- 各位數字：{' + '.join(list(str(by)+str(bm)))} = {sum(int(d) for d in str(by)+str(bm))}
-- 縮減過程：{jd_steps}
-- **結果：{jd.split('/')[-1]}**
-""")
-                if input_btime:
-                    st.divider()
-                    st.markdown(f"**出生時間：** {input_btime}")
+                # 五大階段數計算
+                st.divider()
+                five_stages = calc_five_stages(by, bm, bd, input_btime)
+                part_labels = ["西元年", "月", "日", "時", "分"]
+                with st.expander("📊 五大階段數計算過程"):
+                    for i, stg in enumerate(five_stages):
+                        if stg['digits_str']:
+                            digits_list = ' + '.join(list(stg['digits_str']))
+                            st.markdown(
+                                f"**{stg['name']}（{stg['age']}）** — 累加到「{part_labels[i]}」\n\n"
+                                f"　{digits_list} = {stg['total']}　→　**{stg['display']}**")
+                        else:
+                            st.markdown(
+                                f"**{stg['name']}（{stg['age']}）** — 需填寫出生時間")
             else:
                 st.error("⚠️ 生日格式錯誤，請輸入 YYYY/MM/DD（例：2000/10/10）")
         else:
