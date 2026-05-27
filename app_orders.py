@@ -180,7 +180,10 @@ def get_gs_client():
         st.error(f"❌ Google 授權失敗：{e}")
         st.stop()
 
-def _load_sheet(tab, columns):
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_sheet_cached(tab, columns_tuple):
+    """帶快取的 Google Sheets 讀取（120 秒內不重複呼叫 API）"""
+    columns = list(columns_tuple)
     try:
         wb = get_gs_client().open_by_key(SHEET_ID)
         try:
@@ -208,6 +211,9 @@ def _load_sheet(tab, columns):
         st.error(f"讀取 {tab} 失敗: {e}")
         return pd.DataFrame(columns=columns)
 
+def _load_sheet(tab, columns):
+    return _load_sheet_cached(tab, tuple(columns))
+
 def _save_sheet(tab, df):
     try:
         wb = get_gs_client().open_by_key(SHEET_ID)
@@ -218,6 +224,8 @@ def _save_sheet(tab, df):
         data = df.fillna("").astype(str)
         ws.clear()
         ws.update(range_name='A1', values=[data.columns.tolist()] + data.values.tolist())
+        # 儲存後清除該工作表的快取，下次讀取會取得最新資料
+        _load_sheet_cached.clear()
     except Exception as e:
         st.error(f"儲存 {tab} 失敗: {e}")
 
@@ -456,6 +464,7 @@ with st.sidebar:
     ])
     if st.button("🔄 刷新資料"):
         get_gs_client.clear()
+        _load_sheet_cached.clear()
         st.rerun()
 
     # ── 未出貨提醒 ──
