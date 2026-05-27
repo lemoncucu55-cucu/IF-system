@@ -228,11 +228,13 @@ def render_numerology_table(bday_str, lunar_bday_str="", birth_time_str=""):
                 st.markdown(f"**{s['name']}**")
             st.caption(s['age'])
             solar_disp = f"**{s['display']}**" if is_cur else s['display']
-            st.markdown(f"🌞 {solar_parts[i]}　→　{solar_disp}")
+            st.markdown(f"🌞 {solar_parts[i]}")
+            st.markdown(f"　　{solar_disp}")
             if lunar_stages and lunar_parts:
                 ls = lunar_stages[i]
                 lunar_disp = f"**{ls['display']}**" if is_cur else ls['display']
-                st.markdown(f"🌙 {lunar_parts[i]}　→　{lunar_disp}")
+                st.markdown(f"🌙 {lunar_parts[i]}")
+                st.markdown(f"　　{lunar_disp}")
 
     if not btime:
         st.caption("💡 填寫「出生時間」可計算少年與幼年階段數")
