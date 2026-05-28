@@ -828,50 +828,54 @@ elif page == "🔄 訂單管理":
         # ── 修改訂單 ──
         st.divider()
         st.subheader("✏️ 修改訂單")
-        with st.form("edit_order_form"):
+        _oid = order_id  # 綁定 key，切換訂單時自動重置欄位
+        with st.form(f"edit_order_form_{_oid}"):
             ce0a, ce0b = st.columns(2)
             cur_otype = safe_get(sel_order,"商品種類")
             edit_type = ce0a.selectbox("商品種類", ["客製","公版","修改"],
-                index=["客製","公版","修改"].index(cur_otype) if cur_otype in ["客製","公版","修改"] else 0)
+                index=["客製","公版","修改"].index(cur_otype) if cur_otype in ["客製","公版","修改"] else 0,
+                key=f"etype_{_oid}")
             cur_oitem = safe_get(sel_order,"客製品項")
             edit_item = ce0b.selectbox("客製品項", CUSTOM_ITEMS,
-                index=CUSTOM_ITEMS.index(cur_oitem) if cur_oitem in CUSTOM_ITEMS else 0)
+                index=CUSTOM_ITEMS.index(cur_oitem) if cur_oitem in CUSTOM_ITEMS else 0,
+                key=f"eitem_{_oid}")
 
             ce1, ce2, ce3, ce4 = st.columns(4)
             edit_price = ce1.number_input("總售價 ($)",
-                value=_safe_float(safe_get(sel_order,"總售價")))
+                value=_safe_float(safe_get(sel_order,"總售價")), key=f"eprice_{_oid}")
             edit_cost  = ce2.number_input("成本 ($)",
-                value=_safe_float(safe_get(sel_order,"成本")), key="mgmt_cost")
+                value=_safe_float(safe_get(sel_order,"成本")), key=f"ecost_{_oid}")
             edit_ship  = ce3.number_input("運費 ($)",
-                value=_safe_float(safe_get(sel_order,"運費")), key="mgmt_ship")
+                value=_safe_float(safe_get(sel_order,"運費")), key=f"eship_{_oid}")
             edit_labor = ce4.number_input("工本費 ($)",
-                value=_safe_float(safe_get(sel_order,"工本費")), key="mgmt_labor")
+                value=_safe_float(safe_get(sel_order,"工本費")), key=f"elabor_{_oid}")
             _etc = edit_cost + edit_ship + edit_labor
             if _etc > 0:
                 st.caption(f"💰 總成本 ${_etc:,.0f} ｜ 利潤 ${edit_price - _etc:,.0f}")
 
             cn1, cn2 = st.columns(2)
-            edit_name  = cn1.text_input("客戶名稱", value=safe_get(sel_order, "客戶名稱"))
-            edit_phone = cn2.text_input("客戶電話", value=safe_get(sel_order, "客戶電話"))
+            edit_name  = cn1.text_input("客戶名稱", value=safe_get(sel_order, "客戶名稱"), key=f"ename_{_oid}")
+            edit_phone = cn2.text_input("客戶電話", value=safe_get(sel_order, "客戶電話"), key=f"ephone_{_oid}")
 
             cw1, cw2, cw3, cw4 = st.columns(4)
-            edit_wrist      = cw1.text_input("手圍",                    value=safe_get(sel_order,"手圍"))
-            edit_bday       = cw2.text_input("國曆生日（YYYY/MM/DD）",  value=safe_get(sel_order,"生日"))
-            edit_lunar_bday = cw3.text_input("農曆生日（YYYY/MM/DD）", value=get_lunar_bday(sel_order, _cust_df_7))
-            edit_btime      = cw4.text_input("出生時間（HH:MM）",       value=safe_get(sel_order,"出生時間"))
+            edit_wrist      = cw1.text_input("手圍",                    value=safe_get(sel_order,"手圍"), key=f"ewrist_{_oid}")
+            edit_bday       = cw2.text_input("國曆生日（YYYY/MM/DD）",  value=safe_get(sel_order,"生日"), key=f"ebday_{_oid}")
+            edit_lunar_bday = cw3.text_input("農曆生日（YYYY/MM/DD）", value=get_lunar_bday(sel_order, _cust_df_7), key=f"elunar_{_oid}")
+            edit_btime      = cw4.text_input("出生時間（HH:MM）",       value=safe_get(sel_order,"出生時間"), key=f"ebtime_{_oid}")
 
             ce5, ce6 = st.columns(2)
             cx_v = safe_get(sel_order,"喜神")
             cj_v = safe_get(sel_order,"忌神")
             cx = [x for x in cx_v.split("、") if x in WUXING_OPTS] if cx_v else []
             cj = [x for x in cj_v.split("、") if x in WUXING_OPTS] if cj_v else []
-            edit_xi = ce5.multiselect("喜神", WUXING_OPTS, default=cx)
-            edit_ji = ce6.multiselect("忌神", WUXING_OPTS, default=cj)
+            edit_xi = ce5.multiselect("喜神", WUXING_OPTS, default=cx, key=f"exi_{_oid}")
+            edit_ji = ce6.multiselect("忌神", WUXING_OPTS, default=cj, key=f"eji_{_oid}")
 
             cur_status = safe_get(sel_order, "狀態")
             e_status = st.selectbox("狀態", STATUS_FLOW,
-                index=STATUS_FLOW.index(cur_status) if cur_status in STATUS_FLOW else 0)
-            edit_note = st.text_area("備註", value=safe_get(sel_order, "備註"))
+                index=STATUS_FLOW.index(cur_status) if cur_status in STATUS_FLOW else 0,
+                key=f"estatus_{_oid}")
+            edit_note = st.text_area("備註", value=safe_get(sel_order, "備註"), key=f"enote_{_oid}")
 
             if st.form_submit_button("💾 儲存修改", use_container_width=True):
                 orders_df.loc[sel_idx, "客戶名稱"] = str(edit_name)
