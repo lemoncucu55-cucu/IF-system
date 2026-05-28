@@ -1117,6 +1117,52 @@ elif page == "📦 訂單領料":
             else:
                 st.dataframe(order_hist.iloc[::-1], use_container_width=True, hide_index=True)
 
+                # ── 刪除歷史紀錄 ──
+                st.markdown("#### 🗑️ 刪除領料紀錄")
+                st.caption("刪除後將自動回復庫存數量、移除對應領料項目並重新計算訂單成本。")
+                del_hist_opts = []
+                for hi, hrow in order_hist.iloc[::-1].iterrows():
+                    del_hist_opts.append(
+                        f"{hrow['紀錄時間']} | {hrow['動作']} | {hrow['編號']} — {hrow['名稱']} "
+                        f"({hrow['規格']}) 數量:{hrow['數量變動']} | {hrow['成本備註']}")
+                sel_del_hist = st.selectbox("選擇要刪除的紀錄", del_hist_opts, key="del_hist_sel")
+                if st.button("🗑️ 確認刪除此紀錄", type="secondary", use_container_width=True):
+                    del_row_idx = del_hist_opts.index(sel_del_hist)
+                    del_row = order_hist.iloc[::-1].iloc[del_row_idx]
+                    del_inv_id  = del_row["編號"]
+                    del_qty_chg = _safe_float(del_row["數量變動"])  # 領料為負, 退料為正
+
+                    # 回復庫存
+                    inv_df = load_inventory()
+                    inv_match = inv_df[inv_df["編號"] == del_inv_id]
+                    if not inv_match.empty:
+                        inv_idx = inv_match.index[0]
+                        cur_stock = _safe_float(inv_df.loc[inv_idx, "庫存(顆)"])
+                        inv_df.loc[inv_idx, "庫存(顆)"] = str(cur_stock - del_qty_chg)  # 領料負數→加回; 退料正數→扣回
+                        save_inventory(inv_df)
+
+                    # 移除對應的 OrderItems 紀錄（僅限領料動作）
+                    if del_row["動作"] == "訂單領料" and del_qty_chg < 0:
+                        pick_time = del_row["紀錄時間"]
+                        mask = ((items_df["訂單編號"] == pick_order_id)
+                                & (items_df["庫存編號"] == del_inv_id)
+                                & (items_df["領料時間"] == pick_time))
+                        items_df = items_df[~mask].reset_index(drop=True)
+                        save_order_items(items_df)
+
+                        # 重新計算訂單成本
+                        new_mat_cost = calc_order_material_cost(pick_order_id, items_df)
+                        orders_df.loc[sel_pick_idx, "成本"] = str(new_mat_cost)
+                        save_orders(orders_df)
+
+                    # 刪除歷史紀錄本身
+                    hist_real_idx = order_hist.iloc[::-1].index[del_row_idx]
+                    hist_df = hist_df.drop(hist_real_idx).reset_index(drop=True)
+                    save_history(hist_df)
+
+                    st.success(f"✅ 已刪除紀錄：{del_row['名稱']} {del_row['動作']} {del_row['數量變動']} 顆，庫存已回復。")
+                    time.sleep(1); st.rerun()
+
 # ==========================================
 # § 8 訂單紀錄
 # ==========================================
