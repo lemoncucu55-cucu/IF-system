@@ -112,9 +112,12 @@ def calc_five_stages(year, month, day, time_str=""):
     回傳長度 5 的 list，每項為 dict: {name, age, digits_str, total, reduced, display}
     """
     hour, minute = parse_time(time_str)
-    y = str(year)
-    m = str(month).zfill(2)
-    d = str(day).zfill(2)
+    # 確保所有部位只含數字
+    y = ''.join(c for c in str(year) if c.isdigit())
+    m = ''.join(c for c in str(month) if c.isdigit()).zfill(2)
+    d = ''.join(c for c in str(day) if c.isdigit()).zfill(2)
+    hour = ''.join(c for c in hour if c.isdigit()) if hour else ""
+    minute = ''.join(c for c in minute if c.isdigit()) if minute else ""
 
     digit_parts = [
         y,                                              # 老年：年
@@ -127,7 +130,7 @@ def calc_five_stages(year, month, day, time_str=""):
     results = []
     for i, (name, age) in enumerate(STAGE_DEFS):
         ds = digit_parts[i]
-        if ds:
+        if ds and all(c.isdigit() for c in ds):
             total = sum(int(c) for c in ds)
             chain = _reduce_chain(total)
             reduced = chain[-1]
@@ -358,11 +361,14 @@ def fill_numerology(df: pd.DataFrame) -> pd.DataFrame:
             continue
         by, bm, bd = parsed
         btime_str = str(row.get("出生時間", "")).strip() if "出生時間" in row.index else ""
-        years = personal_year_range(bm, bd)          # [去年, 今年, 明年]
-        df.loc[idx, "流年去年"] = calc_liunian(years[0], bm, bd)
-        df.loc[idx, "流年今年"] = calc_liunian(years[1], bm, bd)
-        df.loc[idx, "流年明年"] = calc_liunian(years[2], bm, bd)
-        df.loc[idx, "階段數"]   = get_current_jieduan(by, bm, bd, btime_str)
+        try:
+            years = personal_year_range(bm, bd)
+            df.loc[idx, "流年去年"] = calc_liunian(years[0], bm, bd)
+            df.loc[idx, "流年今年"] = calc_liunian(years[1], bm, bd)
+            df.loc[idx, "流年明年"] = calc_liunian(years[2], bm, bd)
+            df.loc[idx, "階段數"]   = get_current_jieduan(by, bm, bd, btime_str)
+        except Exception:
+            df.loc[idx, ["流年去年", "流年今年", "流年明年", "階段數"]] = ""
     return df
 
 def _safe_float(val):
