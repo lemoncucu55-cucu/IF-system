@@ -15,7 +15,7 @@ ORDER_COLUMNS = [
     '訂單編號', '建立時間', '客戶名稱', '客戶電話', '商品種類', '客製品項',
     '手圍', '生日', '農曆生日', '出生時間', '喜神', '忌神',
     '流年去年', '流年今年', '流年明年', '階段數',
-    '總售價', '成本', '運費', '總成本', '備註', '狀態', '建單人'
+    '總售價', '成本', '運費', '工本費', '總成本', '備註', '狀態', '建單人'
 ]
 
 CUSTOM_ITEMS = ["手鍊", "項鍊", "鑰匙圈"]
@@ -384,7 +384,8 @@ def calc_total_cost(df: pd.DataFrame) -> pd.DataFrame:
     for idx, row in df.iterrows():
         cost     = _safe_float(row.get("成本", 0))
         shipping = _safe_float(row.get("運費", 0))
-        df.loc[idx, "總成本"] = str(cost + shipping)
+        labor    = _safe_float(row.get("工本費", 0))
+        df.loc[idx, "總成本"] = str(cost + shipping + labor)
     return df
 
 def load_orders():          return _load_sheet("Orders",        ORDER_COLUMNS)
@@ -652,13 +653,14 @@ if page == "📝 建立訂單":
         custom_item   = c4.selectbox("客製品項", CUSTOM_ITEMS)
         order_creator = c5.selectbox("建單人",   ["Imeng", "千畇"])
 
-        p1, p2, p3 = st.columns(3)
+        p1, p2, p3, p4 = st.columns(4)
         total_price   = p1.number_input("總售價 ($)", min_value=0.0, value=0.0)
         cost_price    = p2.number_input("成本 ($)",   min_value=0.0, value=0.0)
         shipping_fee  = p3.number_input("運費 ($)",   min_value=0.0, value=0.0)
-        _tc = cost_price + shipping_fee
+        labor_fee     = p4.number_input("工本費 ($)", min_value=0.0, value=0.0)
+        _tc = cost_price + shipping_fee + labor_fee
         if _tc > 0:
-            st.caption(f"💰 總成本 = ${cost_price:,.0f} + ${shipping_fee:,.0f} = **${_tc:,.0f}**")
+            st.caption(f"💰 總成本 = ${cost_price:,.0f} + ${shipping_fee:,.0f} + ${labor_fee:,.0f} = **${_tc:,.0f}**")
 
         st.subheader("手鍊 & 出生資訊")
         b1, b2, b2b, b3 = st.columns(4)
@@ -701,7 +703,8 @@ if page == "📝 建立訂單":
                     "總售價":   str(total_price),
                     "成本":     str(cost_price),
                     "運費":     str(shipping_fee),
-                    "總成本":   str(cost_price + shipping_fee),
+                    "工本費":   str(labor_fee),
+                    "總成本":   str(cost_price + shipping_fee + labor_fee),
                     "備註":     order_note,
                     "狀態":     "待確認",
                     "建單人":   order_creator,
@@ -782,10 +785,11 @@ elif page == "📋 訂單列表":
             price_val = safe_get(edit_row, "總售價")
             e_price   = c5b.number_input("總售價 ($)", value=float(price_val) if price_val else 0.0)
 
-            cp1, cp2 = st.columns(2)
-            e_cost_6 = cp1.number_input("成本 ($)", value=_safe_float(safe_get(edit_row,"成本")), key="list_cost")
-            e_ship_6 = cp2.number_input("運費 ($)", value=_safe_float(safe_get(edit_row,"運費")), key="list_ship")
-            _tc6 = e_cost_6 + e_ship_6
+            cp1, cp2, cp3 = st.columns(3)
+            e_cost_6  = cp1.number_input("成本 ($)",   value=_safe_float(safe_get(edit_row,"成本")),   key="list_cost")
+            e_ship_6  = cp2.number_input("運費 ($)",   value=_safe_float(safe_get(edit_row,"運費")),   key="list_ship")
+            e_labor_6 = cp3.number_input("工本費 ($)", value=_safe_float(safe_get(edit_row,"工本費")), key="list_labor")
+            _tc6 = e_cost_6 + e_ship_6 + e_labor_6
             if _tc6 > 0:
                 st.caption(f"💰 總成本 ${_tc6:,.0f} ｜ 利潤 ${e_price - _tc6:,.0f}")
 
@@ -815,7 +819,8 @@ elif page == "📋 訂單列表":
                 orders_df.loc[edit_idx, "總售價"]   = str(e_price)
                 orders_df.loc[edit_idx, "成本"]     = str(e_cost_6)
                 orders_df.loc[edit_idx, "運費"]     = str(e_ship_6)
-                orders_df.loc[edit_idx, "總成本"]   = str(e_cost_6 + e_ship_6)
+                orders_df.loc[edit_idx, "工本費"]   = str(e_labor_6)
+                orders_df.loc[edit_idx, "總成本"]   = str(e_cost_6 + e_ship_6 + e_labor_6)
                 orders_df.loc[edit_idx, "喜神"]     = "、".join(e_xi)
                 orders_df.loc[edit_idx, "忌神"]     = "、".join(e_ji)
                 orders_df.loc[edit_idx, "狀態"]     = str(e_status)
@@ -915,14 +920,16 @@ elif page == "🔄 訂單管理":
                 edit_item = ce0b.selectbox("客製品項", CUSTOM_ITEMS,
                     index=CUSTOM_ITEMS.index(cur_oitem) if cur_oitem in CUSTOM_ITEMS else 0)
 
-                ce1, ce2, ce3 = st.columns(3)
+                ce1, ce2, ce3, ce4 = st.columns(4)
                 edit_price = ce1.number_input("修改總售價 ($)",
                     value=_safe_float(safe_get(sel_order,"總售價")))
                 edit_cost  = ce2.number_input("修改成本 ($)",
                     value=_safe_float(safe_get(sel_order,"成本")), key="mgmt_cost")
                 edit_ship  = ce3.number_input("修改運費 ($)",
                     value=_safe_float(safe_get(sel_order,"運費")), key="mgmt_ship")
-                _etc = edit_cost + edit_ship
+                edit_labor = ce4.number_input("修改工本費 ($)",
+                    value=_safe_float(safe_get(sel_order,"工本費")), key="mgmt_labor")
+                _etc = edit_cost + edit_ship + edit_labor
                 if _etc > 0:
                     st.caption(f"💰 總成本 ${_etc:,.0f} ｜ 利潤 ${edit_price - _etc:,.0f}")
 
@@ -947,7 +954,8 @@ elif page == "🔄 訂單管理":
                     orders_df.loc[sel_idx, "總售價"]   = str(edit_price)
                     orders_df.loc[sel_idx, "成本"]     = str(edit_cost)
                     orders_df.loc[sel_idx, "運費"]     = str(edit_ship)
-                    orders_df.loc[sel_idx, "總成本"]   = str(edit_cost + edit_ship)
+                    orders_df.loc[sel_idx, "工本費"]   = str(edit_labor)
+                    orders_df.loc[sel_idx, "總成本"]   = str(edit_cost + edit_ship + edit_labor)
                     orders_df.loc[sel_idx, "手圍"]     = str(edit_wrist)
                     orders_df.loc[sel_idx, "生日"]     = str(edit_bday)
                     orders_df.loc[sel_idx, "農曆生日"] = str(edit_lunar_bday)
