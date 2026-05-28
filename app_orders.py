@@ -839,12 +839,22 @@ elif page == "🔄 訂單管理":
     st.header("🔄 訂單管理")
     orders_df = load_orders()
 
-    # ── 未完成訂單提醒 Banner ──
+    # ── 訂單統計摘要 ──
     if not orders_df.empty:
         pending = orders_df[orders_df["狀態"].isin(["未付款未出貨", "已付款未出貨", "未付款已出貨"])].copy()
+        n_pending = len(pending)
+        n_done    = len(orders_df[orders_df["狀態"] == "已完成"])
+        n_cancel  = len(orders_df[orders_df["狀態"] == "已取消"])
+
+        s1, s2, s3 = st.columns(3)
+        s1.metric("🚨 未完成訂單", f"{n_pending} 筆")
+        s2.metric("✅ 已完成訂單", f"{n_done} 筆")
+        s3.metric("❌ 已取消訂單", f"{n_cancel} 筆")
+
+        # ── 未完成訂單明細 ──
         if not pending.empty:
             with st.container(border=True):
-                st.markdown(f"### 🚨 未完成訂單提醒 — 共 **{len(pending)}** 筆")
+                st.markdown(f"### 🚨 未完成訂單 — 共 **{n_pending}** 筆")
                 cols_h = st.columns([2, 2, 2, 2])
                 cols_h[0].markdown("**訂單編號**")
                 cols_h[1].markdown("**客戶名稱**")
