@@ -776,8 +776,11 @@ elif page == "🔄 訂單管理":
         if disp.empty:
             st.info("篩選後沒有訂單。")
         else:
-            st.dataframe(disp.iloc[::-1], use_container_width=True)
-            st.caption(f"共 {len(disp)} 筆訂單")
+            disp_show = disp.copy()
+            disp_show["利潤"] = disp_show.apply(
+                lambda r: _safe_float(r.get("總售價", 0)) - _safe_float(r.get("總成本", 0)), axis=1)
+            st.dataframe(disp_show.iloc[::-1], use_container_width=True)
+            st.caption(f"共 {len(disp_show)} 筆訂單")
 
         # ── 選擇訂單進行管理 ──
         st.divider()
@@ -840,11 +843,20 @@ elif page == "🔄 訂單管理":
                 index=CUSTOM_ITEMS.index(cur_oitem) if cur_oitem in CUSTOM_ITEMS else 0,
                 key=f"eitem_{_oid}")
 
+            # 檢查是否有領料紀錄 → 成本由領料系統自動計算
+            _items_df_chk = load_order_items()
+            _has_picked = not get_order_items(_oid, _items_df_chk).empty
+            _picked_cost = calc_order_material_cost(_oid, _items_df_chk) if _has_picked else 0.0
+
             ce1, ce2, ce3, ce4 = st.columns(4)
             edit_price = ce1.number_input("總售價 ($)",
                 value=_safe_float(safe_get(sel_order,"總售價")), key=f"eprice_{_oid}")
-            edit_cost  = ce2.number_input("成本 ($)",
-                value=_safe_float(safe_get(sel_order,"成本")), key=f"ecost_{_oid}")
+            if _has_picked:
+                ce2.metric("材料成本（領料）", f"${_picked_cost:,.0f}")
+                edit_cost = _picked_cost  # 鎖定為領料成本
+            else:
+                edit_cost = ce2.number_input("成本 ($)",
+                    value=_safe_float(safe_get(sel_order,"成本")), key=f"ecost_{_oid}")
             edit_ship  = ce3.number_input("運費 ($)",
                 value=_safe_float(safe_get(sel_order,"運費")), key=f"eship_{_oid}")
             edit_labor = ce4.number_input("工本費 ($)",
@@ -852,6 +864,8 @@ elif page == "🔄 訂單管理":
             _etc = edit_cost + edit_ship + edit_labor
             if _etc > 0:
                 st.caption(f"💰 總成本 ${_etc:,.0f} ｜ 利潤 ${edit_price - _etc:,.0f}")
+            if _has_picked:
+                st.caption("ℹ️ 此訂單已有領料紀錄，材料成本由領料系統自動計算，無法手動修改。")
 
             cn1, cn2 = st.columns(2)
             edit_name  = cn1.text_input("客戶名稱", value=safe_get(sel_order, "客戶名稱"), key=f"ename_{_oid}")
@@ -878,6 +892,8 @@ elif page == "🔄 訂單管理":
             edit_note = st.text_area("備註", value=safe_get(sel_order, "備註"), key=f"enote_{_oid}")
 
             if st.form_submit_button("💾 儲存修改", use_container_width=True):
+                # 有領料紀錄時，強制使用領料成本（防止被手動覆蓋）
+                final_cost = _picked_cost if _has_picked else edit_cost
                 orders_df.loc[sel_idx, "客戶名稱"] = str(edit_name)
                 orders_df.loc[sel_idx, "客戶電話"] = str(edit_phone)
                 orders_df.loc[sel_idx, "手圍"]     = str(edit_wrist)
@@ -887,10 +903,10 @@ elif page == "🔄 訂單管理":
                 orders_df.loc[sel_idx, "商品種類"] = str(edit_type)
                 orders_df.loc[sel_idx, "客製品項"] = str(edit_item)
                 orders_df.loc[sel_idx, "總售價"]   = str(edit_price)
-                orders_df.loc[sel_idx, "成本"]     = str(edit_cost)
+                orders_df.loc[sel_idx, "成本"]     = str(final_cost)
                 orders_df.loc[sel_idx, "運費"]     = str(edit_ship)
                 orders_df.loc[sel_idx, "工本費"]   = str(edit_labor)
-                orders_df.loc[sel_idx, "總成本"]   = str(edit_cost + edit_ship + edit_labor)
+                orders_df.loc[sel_idx, "總成本"]   = str(final_cost + edit_ship + edit_labor)
                 orders_df.loc[sel_idx, "喜神"]     = "、".join(edit_xi)
                 orders_df.loc[sel_idx, "忌神"]     = "、".join(edit_ji)
                 orders_df.loc[sel_idx, "狀態"]     = str(e_status)
