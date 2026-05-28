@@ -576,6 +576,7 @@ with st.sidebar:
         "🔄 訂單管理",
         "📦 訂單領料",
         "📜 訂單紀錄",
+        "💰 收益表",
         "👥 客戶管理",
         "🔗 關係鏈結",
         "🔢 數字學計算",
@@ -1214,6 +1215,121 @@ elif page == "📜 訂單紀錄":
 
         st.divider()
         st.dataframe(orders_df.iloc[::-1], use_container_width=True)
+
+# ==========================================
+# § 8.5 收益表
+# ==========================================
+elif page == "💰 收益表":
+    st.header("💰 收益表")
+    orders_df = load_orders()
+
+    if orders_df.empty:
+        st.info("目前沒有任何訂單。")
+    else:
+        # 轉換數值欄位
+        for nc in ["總售價", "成本", "運費", "工本費", "總成本"]:
+            orders_df[f"_{nc}"] = orders_df[nc].apply(lambda x: _safe_float(x))
+        orders_df["_利潤"] = orders_df["_總售價"] - orders_df["_總成本"]
+
+        # 解析月份
+        orders_df["_月份"] = orders_df["建立時間"].apply(
+            lambda x: str(x)[:7] if str(x).strip() else "")
+
+        # ── 篩選 ──
+        f1, f2 = st.columns(2)
+        status_opts = ["已完成", "全部（含進行中）"]
+        rev_status = f1.selectbox("訂單狀態", status_opts, key="rev_status")
+        months = sorted(orders_df["_月份"].unique().tolist(), reverse=True)
+        months = [m for m in months if m]
+        rev_month = f2.selectbox("月份", ["全部"] + months, key="rev_month")
+
+        if rev_status == "已完成":
+            df = orders_df[orders_df["狀態"] == "已完成"].copy()
+        else:
+            df = orders_df[orders_df["狀態"] != "已取消"].copy()
+
+        if rev_month != "全部":
+            df = df[df["_月份"] == rev_month]
+
+        if df.empty:
+            st.info("篩選後沒有訂單資料。")
+        else:
+            # ── 總覽指標 ──
+            total_rev    = df["_總售價"].sum()
+            total_cost   = df["_成本"].sum()
+            total_ship   = df["_運費"].sum()
+            total_labor  = df["_工本費"].sum()
+            total_tc     = df["_總成本"].sum()
+            total_profit = total_rev - total_tc
+            margin       = (total_profit / total_rev * 100) if total_rev else 0
+
+            st.subheader("📊 總覽")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("總營收", f"${total_rev:,.0f}", help="所有訂單總售價加總")
+            k2.metric("總成本", f"${total_tc:,.0f}", help="成本 + 運費 + 工本費")
+            k3.metric("淨利潤", f"${total_profit:,.0f}",
+                      delta=f"{margin:.1f}%")
+            k4.metric("訂單數", f"{len(df)} 筆")
+
+            # 成本拆解
+            st.caption(
+                f"成本明細：材料 ${total_cost:,.0f}　|　"
+                f"運費 ${total_ship:,.0f}　|　"
+                f"工本費 ${total_labor:,.0f}　|　"
+                f"合計 ${total_tc:,.0f}")
+
+            # ── 月度收益表 ──
+            st.divider()
+            st.subheader("📅 月度收益")
+            monthly = df.groupby("_月份").agg(
+                訂單數=("_總售價", "count"),
+                營收=("_總售價", "sum"),
+                成本=("_成本", "sum"),
+                運費=("_運費", "sum"),
+                工本費=("_工本費", "sum"),
+                總成本=("_總成本", "sum"),
+            ).reset_index()
+            monthly.columns = ["月份", "訂單數", "營收", "成本", "運費", "工本費", "總成本"]
+            monthly["利潤"] = monthly["營收"] - monthly["總成本"]
+            monthly["利潤率"] = monthly.apply(
+                lambda r: f"{(r['利潤']/r['營收']*100):.1f}%" if r["營收"] else "—", axis=1)
+            monthly = monthly.sort_values("月份", ascending=False)
+
+            # 格式化顯示
+            display_monthly = monthly.copy()
+            for col in ["營收", "成本", "運費", "工本費", "總成本", "利潤"]:
+                display_monthly[col] = display_monthly[col].apply(lambda x: f"${x:,.0f}")
+            display_monthly["訂單數"] = display_monthly["訂單數"].astype(int)
+            st.dataframe(display_monthly, use_container_width=True, hide_index=True)
+
+            # ── 月度趨勢圖 ──
+            if len(monthly) > 1:
+                chart_df = monthly.sort_values("月份")[["月份", "營收", "總成本", "利潤"]].copy()
+                chart_df = chart_df.set_index("月份")
+                st.line_chart(chart_df)
+
+            # ── 單筆訂單明細 ──
+            st.divider()
+            st.subheader("📋 訂單明細")
+            detail_cols = ["訂單編號", "建立時間", "客戶名稱", "商品種類", "客製品項",
+                           "狀態", "_總售價", "_成本", "_運費", "_工本費", "_總成本", "_利潤"]
+            detail = df[detail_cols].copy()
+            detail.columns = ["訂單編號", "建立時間", "客戶", "種類", "品項",
+                              "狀態", "總售價", "成本", "運費", "工本費", "總成本", "利潤"]
+            detail = detail.sort_values("建立時間", ascending=False)
+            st.dataframe(detail, use_container_width=True, hide_index=True)
+
+            # ── 客戶消費排行 ──
+            st.divider()
+            st.subheader("👑 客戶消費排行")
+            cust_rank = df.groupby("客戶名稱").agg(
+                訂單數=("_總售價", "count"),
+                消費總額=("_總售價", "sum"),
+                貢獻利潤=("_利潤", "sum"),
+            ).reset_index().sort_values("消費總額", ascending=False)
+            cust_rank["消費總額"] = cust_rank["消費總額"].apply(lambda x: f"${x:,.0f}")
+            cust_rank["貢獻利潤"] = cust_rank["貢獻利潤"].apply(lambda x: f"${x:,.0f}")
+            st.dataframe(cust_rank, use_container_width=True, hide_index=True)
 
 # ==========================================
 # § 9 客戶管理
