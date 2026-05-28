@@ -642,7 +642,7 @@ if page == "📝 建立訂單":
 
         st.subheader("訂單資訊")
         c3, c4, c5 = st.columns(3)
-        product_type  = c3.selectbox("商品種類", ["客製", "公版"])
+        product_type  = c3.selectbox("商品種類", ["客製", "公版", "修改"])
         custom_item   = c4.selectbox("客製品項", CUSTOM_ITEMS)
         order_creator = c5.selectbox("建單人",   ["Imeng", "千畇"])
 
@@ -765,8 +765,8 @@ elif page == "📋 訂單列表":
 
             c3, c4, c5, c5b = st.columns(4)
             cur_type = safe_get(edit_row, "商品種類")
-            e_type    = c3.selectbox("商品種類", ["客製","公版"],
-                index=["客製","公版"].index(cur_type) if cur_type in ["客製","公版"] else 0)
+            e_type    = c3.selectbox("商品種類", ["客製","公版","修改"],
+                index=["客製","公版","修改"].index(cur_type) if cur_type in ["客製","公版","修改"] else 0)
             cur_item = safe_get(edit_row, "客製品項")
             e_item    = c4.selectbox("客製品項", CUSTOM_ITEMS,
                 index=CUSTOM_ITEMS.index(cur_item) if cur_item in CUSTOM_ITEMS else 0)
@@ -903,8 +903,8 @@ elif page == "🔄 訂單管理":
             with st.form("edit_order_form"):
                 ce0a, ce0b = st.columns(2)
                 cur_otype = safe_get(sel_order,"商品種類")
-                edit_type = ce0a.selectbox("商品種類", ["客製","公版"],
-                    index=["客製","公版"].index(cur_otype) if cur_otype in ["客製","公版"] else 0)
+                edit_type = ce0a.selectbox("商品種類", ["客製","公版","修改"],
+                    index=["客製","公版","修改"].index(cur_otype) if cur_otype in ["客製","公版","修改"] else 0)
                 cur_oitem = safe_get(sel_order,"客製品項")
                 edit_item = ce0b.selectbox("客製品項", CUSTOM_ITEMS,
                     index=CUSTOM_ITEMS.index(cur_oitem) if cur_oitem in CUSTOM_ITEMS else 0)
