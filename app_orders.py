@@ -590,7 +590,7 @@ with st.sidebar:
     st.divider()
     _all_orders_sb = load_orders()
     _unshipped_sb  = _all_orders_sb[
-        _all_orders_sb["狀態"].isin(["未付款未出貨", "已付款未出貨", "未付款已出貨"])
+        ~_all_orders_sb["狀態"].isin(["已完成", "已取消"])
     ] if not _all_orders_sb.empty else pd.DataFrame()
     if not _unshipped_sb.empty:
         st.error(f"🚨 未完成訂單：{len(_unshipped_sb)} 筆")
@@ -841,7 +841,7 @@ elif page == "🔄 訂單管理":
 
     # ── 訂單統計摘要 ──
     if not orders_df.empty:
-        pending = orders_df[orders_df["狀態"].isin(["未付款未出貨", "已付款未出貨", "未付款已出貨"])].copy()
+        pending = orders_df[~orders_df["狀態"].isin(["已完成", "已取消"])].copy()
         n_pending = len(pending)
         n_done    = len(orders_df[orders_df["狀態"] == "已完成"])
         n_cancel  = len(orders_df[orders_df["狀態"] == "已取消"])
@@ -869,6 +869,7 @@ elif page == "🔄 訂單管理":
                     if s == "未付款未出貨":    status_icon = "🔴"
                     elif s == "已付款未出貨":  status_icon = "🟡"
                     elif s == "未付款已出貨":  status_icon = "🟠"
+                    elif s in ("已確認", "已出貨"): status_icon = "🔵"
                     else:                      status_icon = "⚪"
                     r4.write(f"{status_icon} {s}")
             st.divider()
@@ -1040,7 +1041,7 @@ elif page == "📦 訂單領料":
             "篩選訂單狀態", ["進行中", "已完成", "已取消", "全部"],
             key="pick_status_filter")
         if pick_status_filter == "進行中":
-            active_pick = orders_df[orders_df["狀態"].isin(["未付款未出貨", "已付款未出貨", "未付款已出貨"])].copy()
+            active_pick = orders_df[~orders_df["狀態"].isin(["已完成", "已取消"])].copy()
         elif pick_status_filter == "已完成":
             active_pick = orders_df[orders_df["狀態"] == "已完成"].copy()
         elif pick_status_filter == "已取消":
@@ -1208,7 +1209,7 @@ elif page == "📜 訂單紀錄":
         c1, c2, c3 = st.columns(3)
         c1.metric("總訂單數", f"{len(orders_df)} 筆")
         c2.metric("已完成",   f"{len(orders_df[orders_df['狀態']=='已完成'])} 筆")
-        c3.metric("進行中",   f"{len(orders_df[orders_df['狀態'].isin(['未付款未出貨','已付款未出貨','未付款已出貨'])])} 筆")
+        c3.metric("進行中",   f"{len(orders_df[~orders_df['狀態'].isin(['已完成','已取消'])])} 筆")
 
         try:
             done_df = orders_df[orders_df["狀態"] == "已完成"]
