@@ -1069,15 +1069,17 @@ elif page == "📦 訂單領料":
                     st.info("找不到符合條件的庫存品項（或庫存為 0）。")
                 else:
                     st.caption(f"共 {len(filtered_inv)} 項有庫存")
-                    show_inv_cols = ["編號", "名稱", "五行", "形狀", "寬度mm", "庫存(顆)", "成本單價"]
+                    show_inv_cols = ["編號", "名稱", "進貨廠商", "五行", "形狀", "寬度mm", "庫存(顆)", "成本單價"]
                     st.dataframe(filtered_inv[show_inv_cols], use_container_width=True, hide_index=True)
 
                     # 領料表單
                     st.markdown("#### ✅ 選擇領料")
                     inv_options = []
                     for _, irow in filtered_inv.iterrows():
+                        vendor = irow.get('進貨廠商', '') or ''
                         inv_options.append(
                             f"{irow['編號']} — {irow['名稱']} ({irow['形狀']} {irow['寬度mm']}mm) "
+                            f"{'[' + vendor + '] ' if vendor else ''}"
                             f"[庫存:{irow['庫存(顆)']}] 單價:${_safe_float(irow['成本單價']):,.2f}")
                     sel_inv_item = st.selectbox("選擇庫存品項", inv_options, key="pick_inv_sel")
 
