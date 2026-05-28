@@ -28,7 +28,7 @@ CUSTOMER_COLUMNS = [
 
 DELIVERY_TYPES = ["🏠 住家", "🏪 超商"]
 
-STATUS_FLOW    = ["待確認", "已確認", "已出貨", "已完成", "已取消"]
+STATUS_FLOW    = ["未付款未出貨", "已付款未出貨", "未付款已出貨", "已完成", "已取消"]
 WUXING_OPTS    = ["金", "木", "水", "火", "土"]
 
 RELATIONSHIP_COLUMNS = ['客戶A', '關係類型', '客戶B', '備註', '建立時間']
@@ -585,18 +585,18 @@ with st.sidebar:
         _load_sheet_cached.clear()
         st.rerun()
 
-    # ── 未出貨提醒 ──
+    # ── 未完成提醒 ──
     st.divider()
     _all_orders_sb = load_orders()
     _unshipped_sb  = _all_orders_sb[
-        _all_orders_sb["狀態"].isin(["待確認", "已確認"])
+        _all_orders_sb["狀態"].isin(["未付款未出貨", "已付款未出貨", "未付款已出貨"])
     ] if not _all_orders_sb.empty else pd.DataFrame()
     if not _unshipped_sb.empty:
-        st.error(f"🚨 未出貨訂單：{len(_unshipped_sb)} 筆")
+        st.error(f"🚨 未完成訂單：{len(_unshipped_sb)} 筆")
         for _, _r in _unshipped_sb.iterrows():
             st.caption(f"• {_r['訂單編號']} — {_r['客戶名稱']} [{_r['狀態']}]")
     else:
-        st.success("✅ 所有訂單已出貨")
+        st.success("✅ 所有訂單已完成")
 
     st.divider()
     if st.button("🔃 同步訂單→客戶資料", use_container_width=True,
@@ -706,7 +706,7 @@ if page == "📝 建立訂單":
                     "工本費":   str(labor_fee),
                     "總成本":   str(cost_price + shipping_fee + labor_fee),
                     "備註":     order_note,
-                    "狀態":     "待確認",
+                    "狀態":     "未付款未出貨",
                     "建單人":   order_creator,
                 }
                 orders_df = pd.concat([orders_df, pd.DataFrame([new_order])], ignore_index=True)
@@ -838,24 +838,28 @@ elif page == "🔄 訂單管理":
     st.header("🔄 訂單管理")
     orders_df = load_orders()
 
-    # ── 未出貨提醒 Banner ──
+    # ── 未完成訂單提醒 Banner ──
     if not orders_df.empty:
-        unshipped = orders_df[orders_df["狀態"].isin(["待確認", "已確認"])].copy()
-        if not unshipped.empty:
+        pending = orders_df[orders_df["狀態"].isin(["未付款未出貨", "已付款未出貨", "未付款已出貨"])].copy()
+        if not pending.empty:
             with st.container(border=True):
-                st.markdown(f"### 🚨 未出貨訂單提醒 — 共 **{len(unshipped)}** 筆")
+                st.markdown(f"### 🚨 未完成訂單提醒 — 共 **{len(pending)}** 筆")
                 cols_h = st.columns([2, 2, 2, 2])
                 cols_h[0].markdown("**訂單編號**")
                 cols_h[1].markdown("**客戶名稱**")
                 cols_h[2].markdown("**商品種類**")
                 cols_h[3].markdown("**目前狀態**")
-                for _, urow in unshipped.iterrows():
+                for _, urow in pending.iterrows():
                     r1, r2, r3, r4 = st.columns([2, 2, 2, 2])
                     r1.write(urow.get("訂單編號", ""))
                     r2.write(urow.get("客戶名稱", ""))
                     r3.write(urow.get("商品種類", ""))
-                    status_icon = "🔴" if urow.get("狀態") == "待確認" else "🟡"
-                    r4.write(f"{status_icon} {urow.get('狀態', '')}")
+                    s = urow.get("狀態", "")
+                    if s == "未付款未出貨":    status_icon = "🔴"
+                    elif s == "已付款未出貨":  status_icon = "🟡"
+                    elif s == "未付款已出貨":  status_icon = "🟠"
+                    else:                      status_icon = "⚪"
+                    r4.write(f"{status_icon} {s}")
             st.divider()
 
     if orders_df.empty:
@@ -973,32 +977,41 @@ elif page == "🔄 訂單管理":
             st.subheader("📌 變更狀態")
             cur_status = safe_get(sel_order, "狀態")
 
-            if cur_status == "待確認":
-                ca, cb = st.columns(2)
-                if ca.button("✅ 確認訂單", type="primary", use_container_width=True):
-                    orders_df.loc[sel_idx,"狀態"] = "已確認"
-                    save_orders(orders_df); st.success(f"✅ {order_id} 已確認！")
+            if cur_status == "未付款未出貨":
+                ca, cb, cc = st.columns(3)
+                if ca.button("💰 已付款", type="primary", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已付款未出貨"
+                    save_orders(orders_df); st.success(f"✅ {order_id} 已付款")
                     time.sleep(1.5); st.rerun()
-                if cb.button("❌ 取消訂單", use_container_width=True):
+                if cb.button("📦 已出貨", type="primary", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "未付款已出貨"
+                    save_orders(orders_df); st.success(f"✅ {order_id} 已出貨")
+                    time.sleep(1.5); st.rerun()
+                if cc.button("❌ 取消訂單", use_container_width=True):
                     orders_df.loc[sel_idx,"狀態"] = "已取消"
                     save_orders(orders_df); st.warning(f"{order_id} 已取消。")
                     time.sleep(1.5); st.rerun()
 
-            elif cur_status == "已確認":
+            elif cur_status == "已付款未出貨":
                 ca, cb = st.columns(2)
-                if ca.button("📦 標記為已出貨", type="primary", use_container_width=True):
-                    orders_df.loc[sel_idx,"狀態"] = "已出貨"
-                    save_orders(orders_df); st.success(f"✅ {order_id} 已出貨！")
-                    time.sleep(1.5); st.rerun()
-                if cb.button("❌ 取消訂單", use_container_width=True):
-                    orders_df.loc[sel_idx,"狀態"] = "已取消"
-                    save_orders(orders_df); st.warning(f"{order_id} 已取消。")
-                    time.sleep(1.5); st.rerun()
-
-            elif cur_status == "已出貨":
-                if st.button("✅ 標記為已完成", type="primary", use_container_width=True):
+                if ca.button("📦 已出貨 → 完成", type="primary", use_container_width=True):
                     orders_df.loc[sel_idx,"狀態"] = "已完成"
                     save_orders(orders_df); st.success(f"🎉 {order_id} 已完成！")
+                    time.sleep(1.5); st.rerun()
+                if cb.button("❌ 取消訂單", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已取消"
+                    save_orders(orders_df); st.warning(f"{order_id} 已取消。")
+                    time.sleep(1.5); st.rerun()
+
+            elif cur_status == "未付款已出貨":
+                ca, cb = st.columns(2)
+                if ca.button("💰 已付款 → 完成", type="primary", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已完成"
+                    save_orders(orders_df); st.success(f"🎉 {order_id} 已完成！")
+                    time.sleep(1.5); st.rerun()
+                if cb.button("❌ 取消訂單", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已取消"
+                    save_orders(orders_df); st.warning(f"{order_id} 已取消。")
                     time.sleep(1.5); st.rerun()
 
 # ==========================================
@@ -1016,7 +1029,7 @@ elif page == "📦 訂單領料":
             "篩選訂單狀態", ["進行中", "已完成", "已取消", "全部"],
             key="pick_status_filter")
         if pick_status_filter == "進行中":
-            active_pick = orders_df[orders_df["狀態"].isin(["待確認", "已確認", "已出貨"])].copy()
+            active_pick = orders_df[orders_df["狀態"].isin(["未付款未出貨", "已付款未出貨", "未付款已出貨"])].copy()
         elif pick_status_filter == "已完成":
             active_pick = orders_df[orders_df["狀態"] == "已完成"].copy()
         elif pick_status_filter == "已取消":
@@ -1184,7 +1197,7 @@ elif page == "📜 訂單紀錄":
         c1, c2, c3 = st.columns(3)
         c1.metric("總訂單數", f"{len(orders_df)} 筆")
         c2.metric("已完成",   f"{len(orders_df[orders_df['狀態']=='已完成'])} 筆")
-        c3.metric("進行中",   f"{len(orders_df[orders_df['狀態'].isin(['待確認','已確認','已出貨'])])} 筆")
+        c3.metric("進行中",   f"{len(orders_df[orders_df['狀態'].isin(['未付款未出貨','已付款未出貨','未付款已出貨'])])} 筆")
 
         try:
             done_df = orders_df[orders_df["狀態"] == "已完成"]
