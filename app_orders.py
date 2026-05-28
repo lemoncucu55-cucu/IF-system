@@ -1007,29 +1007,6 @@ elif page == "📦 訂單領料":
                 show_cols = ["庫存編號", "名稱", "五行", "形狀", "尺寸mm", "數量", "成本單價", "小計", "領料時間"]
                 st.dataframe(cur_items[show_cols], use_container_width=True, hide_index=True)
 
-                # ── 退料功能 ──
-                st.markdown("#### 🔄 退料")
-                ret_opts = []
-                for ri, rrow in cur_items.iterrows():
-                    ret_opts.append(f"{rrow['庫存編號']} — {rrow['名稱']} ({rrow['形狀']} {rrow['尺寸mm']}mm) x{rrow['數量']}  [{rrow['領料時間']}]")
-                sel_ret = st.selectbox("選擇要退回的項目", ret_opts, key="pick_return_sel")
-                if st.button("🔄 確認退料", type="secondary"):
-                    ret_row_idx = ret_opts.index(sel_ret)
-                    ret_item = cur_items.iloc[ret_row_idx]
-                    inv_df = load_inventory()
-                    hist_df = load_history()
-                    inv_df, items_df, hist_df = return_inventory_item(
-                        pick_order_id, ret_item, inv_df, items_df, hist_df)
-                    save_inventory(inv_df)
-                    save_order_items(items_df)
-                    save_history(hist_df)
-                    # 更新訂單成本
-                    new_mat_cost = calc_order_material_cost(pick_order_id, items_df)
-                    orders_df.loc[sel_pick_idx, "成本"] = str(new_mat_cost)
-                    save_orders(orders_df)
-                    st.success(f"✅ 已退回 {ret_item['名稱']} x{ret_item['數量']}")
-                    time.sleep(1); st.rerun()
-
                 # 同步成本到訂單
                 st.divider()
                 if st.button("💰 同步材料成本到訂單", use_container_width=True,
