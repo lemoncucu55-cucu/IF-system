@@ -779,6 +779,12 @@ elif page == "🔄 訂單管理":
             disp_show = disp.copy()
             disp_show["利潤"] = disp_show.apply(
                 lambda r: _safe_float(r.get("總售價", 0)) - _safe_float(r.get("總成本", 0)), axis=1)
+            # 將利潤欄位插入總成本與備註之間
+            cols = list(disp_show.columns)
+            cols.remove("利潤")
+            tc_pos = cols.index("總成本") + 1
+            cols.insert(tc_pos, "利潤")
+            disp_show = disp_show[cols]
             st.dataframe(disp_show.iloc[::-1], use_container_width=True)
             st.caption(f"共 {len(disp_show)} 筆訂單")
 
@@ -812,6 +818,7 @@ elif page == "🔄 訂單管理":
                 f"**商品種類：** {safe_get(sel_order,'商品種類') or '-'} | "
                 f"**客製品項：** {safe_get(sel_order,'客製品項') or '-'} | "
                 f"**手圍：** {safe_get(sel_order,'手圍') or '-'} | "
+                f"**生日：** {safe_get(sel_order,'生日') or '-'} | "
                 f"**出生時間：** {safe_get(sel_order,'出生時間') or '-'} | "
                 f"**建單人：** {safe_get(sel_order,'建單人') or '-'} | "
                 f"**建立時間：** {safe_get(sel_order,'建立時間') or '-'}")
