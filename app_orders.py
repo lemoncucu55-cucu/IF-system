@@ -432,6 +432,8 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
                 "數量": str(qty), "成本單價": str(unit_cost),
                 "小計": str(subtotal), "領料時間": now_str, "操作人": operator}
     items_df = pd.concat([items_df, pd.DataFrame([new_item])], ignore_index=True)
+    # 計算此訂單目前累計總成本
+    order_total = calc_order_material_cost(order_id, items_df)
     new_hist = {"紀錄時間": now_str, "單號": order_id, "動作": "訂單領料",
                 "倉庫": inv_row.get("倉庫",""), "批號": inv_row.get("批號",""),
                 "編號": inv_id, "分類": inv_row.get("分類",""),
@@ -439,7 +441,7 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
                 "規格": f"{inv_row['形狀']} {inv_row['寬度mm']}mm",
                 "廠商": inv_row.get("進貨廠商",""),
                 "數量變動": str(-qty),
-                "成本備註": f"單價{unit_cost} x {qty} = {subtotal}"}
+                "成本備註": f"單價${unit_cost} 小計${subtotal} | 訂單總成本${order_total}"}
     hist_df = pd.concat([hist_df, pd.DataFrame([new_hist])], ignore_index=True)
     return inv_df, items_df, hist_df, None
 
