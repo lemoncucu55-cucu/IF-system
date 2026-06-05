@@ -8,6 +8,7 @@ import time
 # 台灣時區 (UTC+8)
 TW_TZ = timezone(timedelta(hours=8))
 def now_tw():
+    """取得台灣時間"""
     return datetime.now(TW_TZ)
 
 # ==========================================
@@ -436,7 +437,7 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
                 "形狀": inv_row["形狀"], "尺寸mm": inv_row["寬度mm"],
                 "數量": str(qty), "成本單價": str(unit_cost),
                 "小計": str(subtotal), "領料時間": now_str, "操作人": operator}
-        # 先計算此訂單之前的累計成本，再加上本次小計
+    # 先計算此訂單之前的累計成本，再加上本次小計
     prev_cost = calc_order_material_cost(order_id, items_df)
     items_df = pd.concat([items_df, pd.DataFrame([new_item])], ignore_index=True)
     order_total = prev_cost + subtotal
@@ -799,13 +800,13 @@ elif page == "🔄 訂單管理":
             st.dataframe(disp_show.iloc[::-1], use_container_width=True)
             st.caption(f"共 {len(disp_show)} 筆訂單")
 
-        # ── 選擇訂單進行管理 ──
-        st.divider()
-        all_display = orders_df.apply(
-            lambda r: f"[{r['狀態']}] {r['訂單編號']} — {r['客戶名稱']} | {r['商品種類']} | ${r['總售價']}", axis=1)
-        sel_disp  = st.selectbox("選擇要管理的訂單", all_display.tolist()[::-1])
-        sel_idx   = orders_df[all_display == sel_disp].index[0]
-        sel_order = orders_df.loc[sel_idx]
+            # ── 從篩選結果中選擇訂單管理 ──
+            st.divider()
+            filtered_display = disp.apply(
+                lambda r: f"[{r['狀態']}] {r['訂單編號']} — {r['客戶名稱']} | {r['商品種類']} | ${r['總售價']}", axis=1)
+            sel_disp  = st.selectbox("選擇要管理的訂單", filtered_display.tolist()[::-1])
+            sel_idx   = disp[filtered_display == sel_disp].index[0]
+            sel_order = orders_df.loc[sel_idx]
         order_id  = sel_order["訂單編號"]
 
         # ── 訂單摘要卡片 ──
