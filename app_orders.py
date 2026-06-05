@@ -148,7 +148,7 @@ def calc_five_stages(year, month, day, time_str=""):
 
 def get_current_stage_index(birth_year, birth_month, birth_day):
     """根據目前年齡回傳階段 index (0=老年 1=中年 2=青年 3=少年 4=幼年)"""
-    today = datetime.now().date()
+    today = now_tw().date()
     age = today.year - birth_year
     if (today.month, today.day) < (birth_month, birth_day):
         age -= 1
@@ -174,7 +174,7 @@ def personal_year_range(birth_month, birth_day, today=None):
       生日  3/01 → 已過   → 個人年 2026 → 顯示 [2025, 2026, 2027]
     """
     if today is None:
-        today = datetime.now().date()
+        today = now_tw().date()
     birthday_passed = (today.month, today.day) >= (birth_month, birth_day)
     personal_year = today.year if birthday_passed else today.year - 1
     return [personal_year - 1, personal_year, personal_year + 1]
@@ -203,7 +203,7 @@ def render_numerology_table(bday_str, lunar_bday_str="", birth_time_str=""):
     # ── 五大階段數 ──
     solar_stages = calc_five_stages(by, bm, bd, btime)
     cur_idx = get_current_stage_index(by, bm, bd)
-    today = datetime.now().date()
+    today = now_tw().date()
     age = today.year - by - (1 if (today.month, today.day) < (bm, bd) else 0)
 
     lunar_parsed = parse_birthday(lunar_bday_str) if lunar_bday_str else None
@@ -427,7 +427,7 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
         return inv_df, items_df, hist_df, "數量必須大於 0"
     if qty > cur_stock:
         return inv_df, items_df, hist_df, f"庫存不足（剩 {cur_stock:.0f} 顆）"
-    now_str  = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now_str  = now_tw().strftime("%Y-%m-%d %H:%M")
     subtotal = qty * unit_cost
     inv_idx  = inv_df[inv_df["編號"] == inv_id].index[0]
     inv_df.loc[inv_idx, "庫存(顆)"] = str(cur_stock - qty)
@@ -455,7 +455,7 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
 def return_inventory_item(order_id, item_row, inv_df, items_df, hist_df):
     inv_id  = item_row["庫存編號"]
     qty     = _safe_float(item_row["數量"])
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now_str = now_tw().strftime("%Y-%m-%d %H:%M")
     inv_match = inv_df[inv_df["編號"] == inv_id]
     if not inv_match.empty:
         inv_idx = inv_match.index[0]
@@ -488,7 +488,7 @@ def get_customer_relations(name: str, rel_df: pd.DataFrame) -> pd.DataFrame:
         columns=["對象", "關係類型", "備註", "建立時間"])
 
 def generate_order_id():
-    return f"ORD-{datetime.now().strftime('%m%d%H%M%S')}"
+    return f"ORD-{now_tw().strftime('%m%d%H%M%S')}"
 
 def safe_get(row, col, default=""):
     """安全取得 Series 欄位值，避免 KeyError"""
@@ -700,7 +700,7 @@ if page == "📝 建立訂單":
                 orders_df = load_orders()
                 new_order = {
                     "訂單編號":  order_id,
-                    "建立時間":  datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "建立時間":  now_tw().strftime("%Y-%m-%d %H:%M"),
                     "客戶名稱":  customer_name,
                     "客戶電話":  customer_phone,
                     "商品種類":  product_type,
@@ -1635,7 +1635,7 @@ elif page == "🔗 關係鏈結":
                                 "關係類型": rel_type,
                                 "客戶B":   cust_b,
                                 "備註":    rel_note,
-                                "建立時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "建立時間": now_tw().strftime("%Y-%m-%d %H:%M"),
                             }
                             rel_df = pd.concat([rel_df, pd.DataFrame([new_rel])], ignore_index=True)
                             save_relationships(rel_df)
@@ -1695,7 +1695,7 @@ elif page == "🔢 數字學計算":
                 by, bm, bd = parsed
                 years  = personal_year_range(bm, bd)
                 labels = ["去年", "今年", "明年"]
-                today  = datetime.now().date()
+                today  = now_tw().date()
 
                 # 判斷是否已過生日說明
                 passed = (today.month, today.day) >= (bm, bd)
