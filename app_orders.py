@@ -433,7 +433,11 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
                 "小計": str(subtotal), "領料時間": now_str, "操作人": operator}
     items_df = pd.concat([items_df, pd.DataFrame([new_item])], ignore_index=True)
     # 計算此訂單目前累計總成本
-    order_total = calc_order_material_cost(order_id, items_df)
+    try:
+        order_total = calc_order_material_cost(order_id, items_df)
+        cost_note = f"[總${order_total:,.1f}] 單價${unit_cost} x{qty}=${subtotal:.1f}"
+    except Exception:
+        cost_note = f"單價${unit_cost} x{qty}=${subtotal:.1f}"
     new_hist = {"紀錄時間": now_str, "單號": order_id, "動作": "訂單領料",
                 "倉庫": inv_row.get("倉庫",""), "批號": inv_row.get("批號",""),
                 "編號": inv_id, "分類": inv_row.get("分類",""),
@@ -441,7 +445,7 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
                 "規格": f"{inv_row['形狀']} {inv_row['寬度mm']}mm",
                 "廠商": inv_row.get("進貨廠商",""),
                 "數量變動": str(-qty),
-                "成本備註": f"[總${order_total:,.1f}] 單價${unit_cost} x{qty}=${subtotal:.1f}"}
+                "成本備註": cost_note}
     hist_df = pd.concat([hist_df, pd.DataFrame([new_hist])], ignore_index=True)
     return inv_df, items_df, hist_df, None
 
@@ -1108,7 +1112,7 @@ elif page == "📦 訂單領料":
                             new_mat_cost = calc_order_material_cost(pick_order_id, items_df)
                             orders_df.loc[sel_pick_idx, "成本"] = str(new_mat_cost)
                             save_orders(orders_df)
-                            st.success(f"✅ 已領取 {inv_row['名稱']} x{pick_qty}（成本 ${_safe_float(inv_row['成本單價']) * pick_qty:,.2f}）")
+                            st.success(f"✅ 已領取 {inv_row['名稱']} x{pick_qty}（小計 ${_safe_float(inv_row['成本單價']) * pick_qty:,.2f}｜訂單總成本 ${new_mat_cost:,.1f}）")
                             time.sleep(1); st.rerun()
 
             # ── 此訂單的歷史紀錄 ──
