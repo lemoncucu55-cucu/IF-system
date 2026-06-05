@@ -431,13 +431,11 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
                 "形狀": inv_row["形狀"], "尺寸mm": inv_row["寬度mm"],
                 "數量": str(qty), "成本單價": str(unit_cost),
                 "小計": str(subtotal), "領料時間": now_str, "操作人": operator}
+        # 先計算此訂單之前的累計成本，再加上本次小計
+    prev_cost = calc_order_material_cost(order_id, items_df)
     items_df = pd.concat([items_df, pd.DataFrame([new_item])], ignore_index=True)
-    # 計算此訂單目前累計總成本
-    try:
-        order_total = calc_order_material_cost(order_id, items_df)
-        cost_note = f"[總${order_total:,.1f}] 單價${unit_cost} x{qty}=${subtotal:.1f}"
-    except Exception:
-        cost_note = f"單價${unit_cost} x{qty}=${subtotal:.1f}"
+    order_total = prev_cost + subtotal
+    cost_note = f"[總${order_total:.1f}] 單價${unit_cost} x{qty}=${subtotal:.1f}"
     new_hist = {"紀錄時間": now_str, "單號": order_id, "動作": "訂單領料",
                 "倉庫": inv_row.get("倉庫",""), "批號": inv_row.get("批號",""),
                 "編號": inv_id, "分類": inv_row.get("分類",""),
