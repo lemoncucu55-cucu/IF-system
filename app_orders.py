@@ -623,10 +623,12 @@ if page == "📝 建立訂單":
     if use_existing and customer_list:
         sel_customer = st.selectbox("選擇客戶", ["── 請選擇 ──"] + customer_list)
         if sel_customer != "── 請選擇 ──":
-            prefill = customers_df[customers_df["客戶名稱"] == sel_customer].iloc[0].to_dict()
-            bday_str = str(prefill.get("生日", "")).strip()
-            lunar_str = str(prefill.get("農曆生日", "")).strip()
-            btime_str = str(prefill.get("出生時間", "")).strip()
+            _raw = customers_df[customers_df["客戶名稱"] == sel_customer].iloc[0].to_dict()
+            # 清理 NaN → 空字串，避免表單欄位帶入 NaN
+            prefill = {k: ("" if pd.isna(v) else str(v).strip()) for k, v in _raw.items()}
+            bday_str = prefill.get("生日", "")
+            lunar_str = prefill.get("農曆生日", "")
+            btime_str = prefill.get("出生時間", "")
             if bday_str:
                 st.markdown("#### 📊 流年 × 階段數 三年對照表")
                 render_numerology_table(bday_str, lunar_str, btime_str)
