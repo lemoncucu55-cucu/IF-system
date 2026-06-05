@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import date, datetime
+TW_TZ = timezone(timedelta(hours=8))
+def now_tw():
+    return datetime.now(TW_TZ)
 import uuid
 import time
 
