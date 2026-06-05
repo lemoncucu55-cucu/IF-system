@@ -2,8 +2,14 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 import time
+
+# 台灣時區 (UTC+8)
+TW_TZ = timezone(timedelta(hours=8))
+def now_tw():
+    """取得台灣時間"""
+    return datetime.now(TW_TZ)
 
 # ==========================================
 # § 1 核心常數
