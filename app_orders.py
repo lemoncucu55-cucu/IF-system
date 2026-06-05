@@ -2,7 +2,10 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime, date, timezone, timedelta
+# 台灣時區 (UTC+8)
+TW_TZ = timezone(timedelta(hours=8))
+def now_tw():
+    return datetime.now(TW_TZ)
 import time
 
 # 台灣時區 (UTC+8)
