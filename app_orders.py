@@ -441,7 +441,7 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
                 "規格": f"{inv_row['形狀']} {inv_row['寬度mm']}mm",
                 "廠商": inv_row.get("進貨廠商",""),
                 "數量變動": str(-qty),
-                "成本備註": f"單價${unit_cost} 小計${subtotal} | 訂單總成本${order_total}"}
+                "成本備註": f"[總${order_total:,.1f}] 單價${unit_cost} x{qty}=${subtotal:.1f}"}
     hist_df = pd.concat([hist_df, pd.DataFrame([new_hist])], ignore_index=True)
     return inv_df, items_df, hist_df, None
 
