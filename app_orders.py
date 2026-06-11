@@ -796,12 +796,16 @@ elif page == "🔄 訂單管理":
         # ── 篩選 + 選擇訂單（整合）──
         st.divider()
         fc1, fc2, fc3 = st.columns([1, 1, 3])
-        status_filter   = fc1.selectbox("篩選狀態", ["全部"] + STATUS_FLOW)
+        status_filter   = fc1.selectbox("篩選狀態", ["未完成", "已完成", "已取消"])
         search_customer = fc2.text_input("搜尋客戶")
 
         disp = orders_df.copy()
-        if status_filter != "全部":
-            disp = disp[disp["狀態"] == status_filter]
+        if status_filter == "未完成":
+            disp = disp[~disp["狀態"].isin(["已完成", "已取消"])]
+        elif status_filter == "已完成":
+            disp = disp[disp["狀態"] == "已完成"]
+        elif status_filter == "已取消":
+            disp = disp[disp["狀態"] == "已取消"]
         if search_customer:
             disp = disp[disp["客戶名稱"].str.contains(search_customer, case=False, na=False)]
 
