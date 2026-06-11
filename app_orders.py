@@ -281,9 +281,9 @@ def get_gs_client():
         st.error(f"❌ Google 授權失敗：{e}")
         st.stop()
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def _load_sheet_cached(tab, columns_tuple):
-    """帶快取的 Google Sheets 讀取（120 秒內不重複呼叫 API）
+    """帶快取的 Google Sheets 讀取（300 秒內不重複呼叫 API）
     注意：失敗時拋出例外（不會被快取），只快取成功結果。"""
     columns = list(columns_tuple)
     wb = get_gs_client().open_by_key(SHEET_ID)
@@ -309,17 +309,28 @@ def _load_sheet_cached(tab, columns_tuple):
             df[col] = ""
     return df[columns].copy()
 
+def _is_rate_limit(e):
+    """判斷是否為 Google API 429 頻率限制錯誤"""
+    return "429" in str(e) or "Quota exceeded" in str(e)
+
 def _load_sheet(tab, columns):
     """讀取工作表，失敗時自動重連一次；仍失敗則顯示錯誤並回傳空 DataFrame"""
     try:
         return _load_sheet_cached(tab, tuple(columns))
-    except Exception:
-        # 第一次失敗 → 清除快取、重新授權後重試
+    except Exception as e1:
+        if _is_rate_limit(e1):
+            time.sleep(5)
         try:
             _load_sheet_cached.clear()
             get_gs_client.clear()
             return _load_sheet_cached(tab, tuple(columns))
         except Exception as e2:
+            if _is_rate_limit(e2):
+                time.sleep(10)
+                try:
+                    return _load_sheet_cached(tab, tuple(columns))
+                except Exception as e3:
+                    pass
             err_type = type(e2).__name__
             err_msg  = str(e2) or "(無錯誤訊息)"
             st.error(f"讀取 {tab} 失敗 [{err_type}]: {err_msg}")
@@ -338,12 +349,22 @@ def _save_sheet(tab, df):
     try:
         _do_save()
         _load_sheet_cached.clear()
-    except Exception:
+    except Exception as e1:
+        if _is_rate_limit(e1):
+            time.sleep(5)
         try:
             get_gs_client.clear()
             _load_sheet_cached.clear()
             _do_save()
         except Exception as e2:
+            if _is_rate_limit(e2):
+                time.sleep(10)
+                try:
+                    _do_save()
+                    _load_sheet_cached.clear()
+                    return
+                except Exception:
+                    pass
             err_type = type(e2).__name__
             err_msg  = str(e2) or "(無錯誤訊息)"
             st.error(f"儲存 {tab} 失敗 [{err_type}]: {err_msg}")
