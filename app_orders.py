@@ -2,8 +2,14 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 import time
+
+# 台灣時區 (UTC+8)
+TW_TZ = timezone(timedelta(hours=8))
+def now_tw():
+    """取得台灣時間"""
+    return datetime.now(TW_TZ)
 
 # ==========================================
 # § 1 核心常數
@@ -143,7 +149,7 @@ def calc_five_stages(year, month, day, time_str=""):
 
 def get_current_stage_index(birth_year, birth_month, birth_day):
     """根據目前年齡回傳階段 index (0=老年 1=中年 2=青年 3=少年 4=幼年)"""
-    today = datetime.now().date()
+    today = now_tw().date()
     age = today.year - birth_year
     if (today.month, today.day) < (birth_month, birth_day):
         age -= 1
@@ -169,7 +175,7 @@ def personal_year_range(birth_month, birth_day, today=None):
       生日  3/01 → 已過   → 個人年 2026 → 顯示 [2025, 2026, 2027]
     """
     if today is None:
-        today = datetime.now().date()
+        today = now_tw().date()
     birthday_passed = (today.month, today.day) >= (birth_month, birth_day)
     personal_year = today.year if birthday_passed else today.year - 1
     return [personal_year - 1, personal_year, personal_year + 1]
@@ -198,7 +204,7 @@ def render_numerology_table(bday_str, lunar_bday_str="", birth_time_str=""):
     # ── 五大階段數 ──
     solar_stages = calc_five_stages(by, bm, bd, btime)
     cur_idx = get_current_stage_index(by, bm, bd)
-    today = datetime.now().date()
+    today = now_tw().date()
     age = today.year - by - (1 if (today.month, today.day) < (bm, bd) else 0)
 
     lunar_parsed = parse_birthday(lunar_bday_str) if lunar_bday_str else None
@@ -422,7 +428,7 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
         return inv_df, items_df, hist_df, "數量必須大於 0"
     if qty > cur_stock:
         return inv_df, items_df, hist_df, f"庫存不足（剩 {cur_stock:.0f} 顆）"
-    now_str  = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now_str  = now_tw().strftime("%Y-%m-%d %H:%M")
     subtotal = qty * unit_cost
     inv_idx  = inv_df[inv_df["編號"] == inv_id].index[0]
     inv_df.loc[inv_idx, "庫存(顆)"] = str(cur_stock - qty)
@@ -431,7 +437,7 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
                 "形狀": inv_row["形狀"], "尺寸mm": inv_row["寬度mm"],
                 "數量": str(qty), "成本單價": str(unit_cost),
                 "小計": str(subtotal), "領料時間": now_str, "操作人": operator}
-        # 先計算此訂單之前的累計成本，再加上本次小計
+    # 先計算此訂單之前的累計成本，再加上本次小計
     prev_cost = calc_order_material_cost(order_id, items_df)
     items_df = pd.concat([items_df, pd.DataFrame([new_item])], ignore_index=True)
     order_total = prev_cost + subtotal
@@ -450,7 +456,7 @@ def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist
 def return_inventory_item(order_id, item_row, inv_df, items_df, hist_df):
     inv_id  = item_row["庫存編號"]
     qty     = _safe_float(item_row["數量"])
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now_str = now_tw().strftime("%Y-%m-%d %H:%M")
     inv_match = inv_df[inv_df["編號"] == inv_id]
     if not inv_match.empty:
         inv_idx = inv_match.index[0]
@@ -483,7 +489,7 @@ def get_customer_relations(name: str, rel_df: pd.DataFrame) -> pd.DataFrame:
         columns=["對象", "關係類型", "備註", "建立時間"])
 
 def generate_order_id():
-    return f"ORD-{datetime.now().strftime('%m%d%H%M%S')}"
+    return f"ORD-{now_tw().strftime('%m%d%H%M%S')}"
 
 def safe_get(row, col, default=""):
     """安全取得 Series 欄位值，避免 KeyError"""
@@ -695,7 +701,7 @@ if page == "📝 建立訂單":
                 orders_df = load_orders()
                 new_order = {
                     "訂單編號":  order_id,
-                    "建立時間":  datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "建立時間":  now_tw().strftime("%Y-%m-%d %H:%M"),
                     "客戶名稱":  customer_name,
                     "客戶電話":  customer_phone,
                     "商品種類":  product_type,
@@ -766,12 +772,11 @@ elif page == "🔄 訂單管理":
                     else:                      status_icon = "⚪"
                     r4.write(f"{status_icon} {s}")
 
-        # ── 訂單列表（篩選 + 搜尋）──
+        # ── 篩選 + 選擇訂單（整合）──
         st.divider()
-        st.subheader("📋 所有訂單列表")
-        fc1, fc2 = st.columns(2)
+        fc1, fc2, fc3 = st.columns([1, 1, 3])
         status_filter   = fc1.selectbox("篩選狀態", ["全部"] + STATUS_FLOW)
-        search_customer = fc2.text_input("搜尋客戶名稱")
+        search_customer = fc2.text_input("搜尋客戶")
 
         disp = orders_df.copy()
         if status_filter != "全部":
@@ -782,197 +787,175 @@ elif page == "🔄 訂單管理":
         if disp.empty:
             st.info("篩選後沒有訂單。")
         else:
-            disp_show = disp.copy()
-            disp_show["利潤"] = disp_show.apply(
-                lambda r: _safe_float(r.get("總售價", 0)) - _safe_float(r.get("總成本", 0)), axis=1)
-            # 將利潤欄位插入總成本與備註之間
-            cols = list(disp_show.columns)
-            cols.remove("利潤")
-            tc_pos = cols.index("總成本") + 1
-            cols.insert(tc_pos, "利潤")
-            disp_show = disp_show[cols]
-            st.dataframe(disp_show.iloc[::-1], use_container_width=True)
-            st.caption(f"共 {len(disp_show)} 筆訂單")
+            filtered_display = disp.apply(
+                lambda r: f"[{r['狀態']}] {r['訂單編號']} — {r['客戶名稱']} | {r['商品種類']} | ${r['總售價']}", axis=1)
+            sel_disp = fc3.selectbox("選擇訂單", filtered_display.tolist()[::-1])
+            sel_idx   = disp[filtered_display == sel_disp].index[0]
+            sel_order = orders_df.loc[sel_idx]
+            order_id  = sel_order["訂單編號"]
 
-        # ── 選擇訂單進行管理 ──
-        st.divider()
-        all_display = orders_df.apply(
-            lambda r: f"[{r['狀態']}] {r['訂單編號']} — {r['客戶名稱']} | {r['商品種類']} | ${r['總售價']}", axis=1)
-        sel_disp  = st.selectbox("選擇要管理的訂單", all_display.tolist()[::-1])
-        sel_idx   = orders_df[all_display == sel_disp].index[0]
-        sel_order = orders_df.loc[sel_idx]
-        order_id  = sel_order["訂單編號"]
+            # ── 訂單摘要卡片 ──
+            with st.container(border=True):
+                c1, c2, c3, c4, c5, c6 = st.columns(6)
+                c1.metric("訂單編號", order_id)
+                c2.metric("客戶",    safe_get(sel_order, "客戶名稱"))
+                price_v = safe_get(sel_order, "總售價")
+                tc_v    = safe_get(sel_order, "總成本")
+                price_f = _safe_float(price_v)
+                tc_f    = _safe_float(tc_v)
+                c3.metric("總售價",  f"${price_f:,.0f}")
+                c4.metric("總成本",  f"${tc_f:,.0f}")
+                profit = price_f - tc_f
+                c5.metric("利潤",    f"${profit:,.0f}",
+                          delta=f"{(profit/price_f*100):.0f}%" if price_f else None)
+                c6.metric("目前狀態", safe_get(sel_order, "狀態"))
 
-        # ── 訂單摘要卡片 ──
-        with st.container(border=True):
-            c1, c2, c3, c4, c5, c6 = st.columns(6)
-            c1.metric("訂單編號", order_id)
-            c2.metric("客戶",    safe_get(sel_order, "客戶名稱"))
-            price_v = safe_get(sel_order, "總售價")
-            tc_v    = safe_get(sel_order, "總成本")
-            price_f = _safe_float(price_v)
-            tc_f    = _safe_float(tc_v)
-            c3.metric("總售價",  f"${price_f:,.0f}")
-            c4.metric("總成本",  f"${tc_f:,.0f}")
-            profit = price_f - tc_f
-            c5.metric("利潤",    f"${profit:,.0f}",
-                      delta=f"{(profit/price_f*100):.0f}%" if price_f else None)
-            c6.metric("目前狀態", safe_get(sel_order, "狀態"))
+                st.write(
+                    f"**電話：** {safe_get(sel_order,'客戶電話') or '-'} | "
+                    f"**商品種類：** {safe_get(sel_order,'商品種類') or '-'} | "
+                    f"**客製品項：** {safe_get(sel_order,'客製品項') or '-'} | "
+                    f"**手圍：** {safe_get(sel_order,'手圍') or '-'} | "
+                    f"**生日：** {safe_get(sel_order,'生日') or '-'} | "
+                    f"**出生時間：** {safe_get(sel_order,'出生時間') or '-'} | "
+                    f"**建單人：** {safe_get(sel_order,'建單人') or '-'} | "
+                    f"**建立時間：** {safe_get(sel_order,'建立時間') or '-'}")
+                st.write(
+                    f"**喜神：** {safe_get(sel_order,'喜神') or '-'} | "
+                    f"**忌神：** {safe_get(sel_order,'忌神') or '-'}")
+                if safe_get(sel_order, "備註"):
+                    st.write(f"**備註：** {sel_order['備註']}")
 
-            st.write(
-                f"**電話：** {safe_get(sel_order,'客戶電話') or '-'} | "
-                f"**商品種類：** {safe_get(sel_order,'商品種類') or '-'} | "
-                f"**客製品項：** {safe_get(sel_order,'客製品項') or '-'} | "
-                f"**手圍：** {safe_get(sel_order,'手圍') or '-'} | "
-                f"**生日：** {safe_get(sel_order,'生日') or '-'} | "
-                f"**出生時間：** {safe_get(sel_order,'出生時間') or '-'} | "
-                f"**建單人：** {safe_get(sel_order,'建單人') or '-'} | "
-                f"**建立時間：** {safe_get(sel_order,'建立時間') or '-'}")
-            st.write(
-                f"**喜神：** {safe_get(sel_order,'喜神') or '-'} | "
-                f"**忌神：** {safe_get(sel_order,'忌神') or '-'}")
-            if safe_get(sel_order, "備註"):
-                st.write(f"**備註：** {sel_order['備註']}")
+                bday_val = safe_get(sel_order, "生日")
+                lunar_val = get_lunar_bday(sel_order, _cust_df_7)
+                btime_val = safe_get(sel_order, "出生時間")
+                if bday_val:
+                    st.markdown("**📊 流年 × 階段數 三年對照表**")
+                    render_numerology_table(bday_val, lunar_val, btime_val)
 
-            bday_val = safe_get(sel_order, "生日")
-            lunar_val = get_lunar_bday(sel_order, _cust_df_7)
-            btime_val = safe_get(sel_order, "出生時間")
-            if bday_val:
-                st.markdown("**📊 流年 × 階段數 三年對照表**")
-                render_numerology_table(bday_val, lunar_val, btime_val)
-
-        # ── 修改訂單 ──
-        st.divider()
-        st.subheader("✏️ 修改訂單")
-        _oid = order_id  # 綁定 key，切換訂單時自動重置欄位
-        with st.form(f"edit_order_form_{_oid}"):
-            ce0a, ce0b = st.columns(2)
-            cur_otype = safe_get(sel_order,"商品種類")
-            edit_type = ce0a.selectbox("商品種類", ["客製","公版","修改"],
-                index=["客製","公版","修改"].index(cur_otype) if cur_otype in ["客製","公版","修改"] else 0,
-                key=f"etype_{_oid}")
-            cur_oitem = safe_get(sel_order,"客製品項")
-            edit_item = ce0b.selectbox("客製品項", CUSTOM_ITEMS,
-                index=CUSTOM_ITEMS.index(cur_oitem) if cur_oitem in CUSTOM_ITEMS else 0,
-                key=f"eitem_{_oid}")
-
-            # 檢查是否有領料紀錄 → 成本由領料系統自動計算
-            _items_df_chk = load_order_items()
-            _has_picked = not get_order_items(_oid, _items_df_chk).empty
-            _picked_cost = calc_order_material_cost(_oid, _items_df_chk) if _has_picked else 0.0
-
-            ce1, ce2, ce3, ce4 = st.columns(4)
-            edit_price = ce1.number_input("總售價 ($)",
-                value=_safe_float(safe_get(sel_order,"總售價")), key=f"eprice_{_oid}")
-            if _has_picked:
-                ce2.metric("材料成本（領料）", f"${_picked_cost:,.0f}")
-                edit_cost = _picked_cost  # 鎖定為領料成本
-            else:
-                edit_cost = ce2.number_input("成本 ($)",
-                    value=_safe_float(safe_get(sel_order,"成本")), key=f"ecost_{_oid}")
-            edit_ship  = ce3.number_input("運費 ($)",
-                value=_safe_float(safe_get(sel_order,"運費")), key=f"eship_{_oid}")
-            edit_labor = ce4.number_input("工本費 ($)",
-                value=_safe_float(safe_get(sel_order,"工本費")), key=f"elabor_{_oid}")
-            _etc = edit_cost + edit_ship + edit_labor
-            if _etc > 0:
-                st.caption(f"💰 總成本 ${_etc:,.0f} ｜ 利潤 ${edit_price - _etc:,.0f}")
-            if _has_picked:
-                st.caption("ℹ️ 此訂單已有領料紀錄，材料成本由領料系統自動計算，無法手動修改。")
-
-            cn1, cn2 = st.columns(2)
-            edit_name  = cn1.text_input("客戶名稱", value=safe_get(sel_order, "客戶名稱"), key=f"ename_{_oid}")
-            edit_phone = cn2.text_input("客戶電話", value=safe_get(sel_order, "客戶電話"), key=f"ephone_{_oid}")
-
-            cw1, cw2, cw3, cw4 = st.columns(4)
-            edit_wrist      = cw1.text_input("手圍",                    value=safe_get(sel_order,"手圍"), key=f"ewrist_{_oid}")
-            edit_bday       = cw2.text_input("國曆生日（YYYY/MM/DD）",  value=safe_get(sel_order,"生日"), key=f"ebday_{_oid}")
-            edit_lunar_bday = cw3.text_input("農曆生日（YYYY/MM/DD）", value=get_lunar_bday(sel_order, _cust_df_7), key=f"elunar_{_oid}")
-            edit_btime      = cw4.text_input("出生時間（HH:MM）",       value=safe_get(sel_order,"出生時間"), key=f"ebtime_{_oid}")
-
-            ce5, ce6 = st.columns(2)
-            cx_v = safe_get(sel_order,"喜神")
-            cj_v = safe_get(sel_order,"忌神")
-            cx = [x for x in cx_v.split("、") if x in WUXING_OPTS] if cx_v else []
-            cj = [x for x in cj_v.split("、") if x in WUXING_OPTS] if cj_v else []
-            edit_xi = ce5.multiselect("喜神", WUXING_OPTS, default=cx, key=f"exi_{_oid}")
-            edit_ji = ce6.multiselect("忌神", WUXING_OPTS, default=cj, key=f"eji_{_oid}")
-
+            # ── 快速變更狀態 ──
             cur_status = safe_get(sel_order, "狀態")
-            e_status = st.selectbox("狀態", STATUS_FLOW,
-                index=STATUS_FLOW.index(cur_status) if cur_status in STATUS_FLOW else 0,
-                key=f"estatus_{_oid}")
-            edit_note = st.text_area("備註", value=safe_get(sel_order, "備註"), key=f"enote_{_oid}")
+            if cur_status == "未付款未出貨":
+                ca, cb, cc = st.columns(3)
+                if ca.button("💰 已付款", type="primary", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已付款未出貨"
+                    save_orders(orders_df); st.success(f"✅ {order_id} 已付款")
+                    time.sleep(1.5); st.rerun()
+                if cb.button("📦 已出貨", type="primary", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "未付款已出貨"
+                    save_orders(orders_df); st.success(f"✅ {order_id} 已出貨")
+                    time.sleep(1.5); st.rerun()
+                if cc.button("❌ 取消訂單", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已取消"
+                    save_orders(orders_df); st.warning(f"{order_id} 已取消。")
+                    time.sleep(1.5); st.rerun()
+            elif cur_status == "已付款未出貨":
+                ca, cb = st.columns(2)
+                if ca.button("📦 已出貨 → 完成", type="primary", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已完成"
+                    save_orders(orders_df); st.success(f"🎉 {order_id} 已完成！")
+                    time.sleep(1.5); st.rerun()
+                if cb.button("❌ 取消訂單", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已取消"
+                    save_orders(orders_df); st.warning(f"{order_id} 已取消。")
+                    time.sleep(1.5); st.rerun()
+            elif cur_status == "未付款已出貨":
+                ca, cb = st.columns(2)
+                if ca.button("💰 已付款 → 完成", type="primary", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已完成"
+                    save_orders(orders_df); st.success(f"🎉 {order_id} 已完成！")
+                    time.sleep(1.5); st.rerun()
+                if cb.button("❌ 取消訂單", use_container_width=True):
+                    orders_df.loc[sel_idx,"狀態"] = "已取消"
+                    save_orders(orders_df); st.warning(f"{order_id} 已取消。")
+                    time.sleep(1.5); st.rerun()
+            elif cur_status in ("已完成", "已取消"):
+                st.info(f"此訂單狀態為「{cur_status}」，無需進一步操作。")
 
-            if st.form_submit_button("💾 儲存修改", use_container_width=True):
-                # 有領料紀錄時，強制使用領料成本（防止被手動覆蓋）
-                final_cost = _picked_cost if _has_picked else edit_cost
-                orders_df.loc[sel_idx, "客戶名稱"] = str(edit_name)
-                orders_df.loc[sel_idx, "客戶電話"] = str(edit_phone)
-                orders_df.loc[sel_idx, "手圍"]     = str(edit_wrist)
-                orders_df.loc[sel_idx, "生日"]     = str(edit_bday)
-                orders_df.loc[sel_idx, "農曆生日"] = str(edit_lunar_bday)
-                orders_df.loc[sel_idx, "出生時間"] = str(edit_btime)
-                orders_df.loc[sel_idx, "商品種類"] = str(edit_type)
-                orders_df.loc[sel_idx, "客製品項"] = str(edit_item)
-                orders_df.loc[sel_idx, "總售價"]   = str(edit_price)
-                orders_df.loc[sel_idx, "成本"]     = str(final_cost)
-                orders_df.loc[sel_idx, "運費"]     = str(edit_ship)
-                orders_df.loc[sel_idx, "工本費"]   = str(edit_labor)
-                orders_df.loc[sel_idx, "總成本"]   = str(final_cost + edit_ship + edit_labor)
-                orders_df.loc[sel_idx, "喜神"]     = "、".join(edit_xi)
-                orders_df.loc[sel_idx, "忌神"]     = "、".join(edit_ji)
-                orders_df.loc[sel_idx, "狀態"]     = str(e_status)
-                orders_df.loc[sel_idx, "備註"]     = str(edit_note)
-                save_orders(orders_df)
-                sync_lunar_bday_to_customer(str(edit_name), str(edit_lunar_bday), _cust_df_7)
-                st.success(f"✅ 訂單 {order_id} 已更新！")
-                time.sleep(1); st.rerun()
+            # ── 修改訂單 ──
+            st.divider()
+            st.subheader("✏️ 修改訂單")
+            _oid = order_id
+            with st.form(f"edit_order_form_{_oid}"):
+                ce0a, ce0b = st.columns(2)
+                cur_otype = safe_get(sel_order,"商品種類")
+                edit_type = ce0a.selectbox("商品種類", ["客製","公版","修改"],
+                    index=["客製","公版","修改"].index(cur_otype) if cur_otype in ["客製","公版","修改"] else 0,
+                    key=f"etype_{_oid}")
+                cur_oitem = safe_get(sel_order,"客製品項")
+                edit_item = ce0b.selectbox("客製品項", CUSTOM_ITEMS,
+                    index=CUSTOM_ITEMS.index(cur_oitem) if cur_oitem in CUSTOM_ITEMS else 0,
+                    key=f"eitem_{_oid}")
 
-        # ── 快速變更狀態 ──
-        st.divider()
-        st.subheader("📌 快速變更狀態")
-        cur_status = safe_get(sel_order, "狀態")
+                _items_df_chk = load_order_items()
+                _has_picked = not get_order_items(_oid, _items_df_chk).empty
+                _picked_cost = calc_order_material_cost(_oid, _items_df_chk) if _has_picked else 0.0
 
-        if cur_status == "未付款未出貨":
-            ca, cb, cc = st.columns(3)
-            if ca.button("💰 已付款", type="primary", use_container_width=True):
-                orders_df.loc[sel_idx,"狀態"] = "已付款未出貨"
-                save_orders(orders_df); st.success(f"✅ {order_id} 已付款")
-                time.sleep(1.5); st.rerun()
-            if cb.button("📦 已出貨", type="primary", use_container_width=True):
-                orders_df.loc[sel_idx,"狀態"] = "未付款已出貨"
-                save_orders(orders_df); st.success(f"✅ {order_id} 已出貨")
-                time.sleep(1.5); st.rerun()
-            if cc.button("❌ 取消訂單", use_container_width=True):
-                orders_df.loc[sel_idx,"狀態"] = "已取消"
-                save_orders(orders_df); st.warning(f"{order_id} 已取消。")
-                time.sleep(1.5); st.rerun()
+                ce1, ce2, ce3, ce4 = st.columns(4)
+                edit_price = ce1.number_input("總售價 ($)",
+                    value=_safe_float(safe_get(sel_order,"總售價")), key=f"eprice_{_oid}")
+                if _has_picked:
+                    ce2.metric("材料成本（領料）", f"${_picked_cost:,.0f}")
+                    edit_cost = _picked_cost
+                else:
+                    edit_cost = ce2.number_input("成本 ($)",
+                        value=_safe_float(safe_get(sel_order,"成本")), key=f"ecost_{_oid}")
+                edit_ship  = ce3.number_input("運費 ($)",
+                    value=_safe_float(safe_get(sel_order,"運費")), key=f"eship_{_oid}")
+                edit_labor = ce4.number_input("工本費 ($)",
+                    value=_safe_float(safe_get(sel_order,"工本費")), key=f"elabor_{_oid}")
+                _etc = edit_cost + edit_ship + edit_labor
+                if _etc > 0:
+                    st.caption(f"💰 總成本 ${_etc:,.0f} ｜ 利潤 ${edit_price - _etc:,.0f}")
+                if _has_picked:
+                    st.caption("ℹ️ 此訂單已有領料紀錄，材料成本由領料系統自動計算，無法手動修改。")
 
-        elif cur_status == "已付款未出貨":
-            ca, cb = st.columns(2)
-            if ca.button("📦 已出貨 → 完成", type="primary", use_container_width=True):
-                orders_df.loc[sel_idx,"狀態"] = "已完成"
-                save_orders(orders_df); st.success(f"🎉 {order_id} 已完成！")
-                time.sleep(1.5); st.rerun()
-            if cb.button("❌ 取消訂單", use_container_width=True):
-                orders_df.loc[sel_idx,"狀態"] = "已取消"
-                save_orders(orders_df); st.warning(f"{order_id} 已取消。")
-                time.sleep(1.5); st.rerun()
+                cn1, cn2 = st.columns(2)
+                edit_name  = cn1.text_input("客戶名稱", value=safe_get(sel_order, "客戶名稱"), key=f"ename_{_oid}")
+                edit_phone = cn2.text_input("客戶電話", value=safe_get(sel_order, "客戶電話"), key=f"ephone_{_oid}")
 
-        elif cur_status == "未付款已出貨":
-            ca, cb = st.columns(2)
-            if ca.button("💰 已付款 → 完成", type="primary", use_container_width=True):
-                orders_df.loc[sel_idx,"狀態"] = "已完成"
-                save_orders(orders_df); st.success(f"🎉 {order_id} 已完成！")
-                time.sleep(1.5); st.rerun()
-            if cb.button("❌ 取消訂單", use_container_width=True):
-                orders_df.loc[sel_idx,"狀態"] = "已取消"
-                save_orders(orders_df); st.warning(f"{order_id} 已取消。")
-                time.sleep(1.5); st.rerun()
+                cw1, cw2, cw3, cw4 = st.columns(4)
+                edit_wrist      = cw1.text_input("手圍",                    value=safe_get(sel_order,"手圍"), key=f"ewrist_{_oid}")
+                edit_bday       = cw2.text_input("國曆生日（YYYY/MM/DD）",  value=safe_get(sel_order,"生日"), key=f"ebday_{_oid}")
+                edit_lunar_bday = cw3.text_input("農曆生日（YYYY/MM/DD）", value=get_lunar_bday(sel_order, _cust_df_7), key=f"elunar_{_oid}")
+                edit_btime      = cw4.text_input("出生時間（HH:MM）",       value=safe_get(sel_order,"出生時間"), key=f"ebtime_{_oid}")
 
-        elif cur_status in ("已完成", "已取消"):
-            st.info(f"此訂單狀態為「{cur_status}」，無需進一步操作。")
+                ce5, ce6 = st.columns(2)
+                cx_v = safe_get(sel_order,"喜神")
+                cj_v = safe_get(sel_order,"忌神")
+                cx = [x for x in cx_v.split("、") if x in WUXING_OPTS] if cx_v else []
+                cj = [x for x in cj_v.split("、") if x in WUXING_OPTS] if cj_v else []
+                edit_xi = ce5.multiselect("喜神", WUXING_OPTS, default=cx, key=f"exi_{_oid}")
+                edit_ji = ce6.multiselect("忌神", WUXING_OPTS, default=cj, key=f"eji_{_oid}")
+
+                cur_status_e = safe_get(sel_order, "狀態")
+                e_status = st.selectbox("狀態", STATUS_FLOW,
+                    index=STATUS_FLOW.index(cur_status_e) if cur_status_e in STATUS_FLOW else 0,
+                    key=f"estatus_{_oid}")
+                edit_note = st.text_area("備註", value=safe_get(sel_order, "備註"), key=f"enote_{_oid}")
+
+                if st.form_submit_button("💾 儲存修改", use_container_width=True):
+                    final_cost = _picked_cost if _has_picked else edit_cost
+                    orders_df.loc[sel_idx, "客戶名稱"] = str(edit_name)
+                    orders_df.loc[sel_idx, "客戶電話"] = str(edit_phone)
+                    orders_df.loc[sel_idx, "手圍"]     = str(edit_wrist)
+                    orders_df.loc[sel_idx, "生日"]     = str(edit_bday)
+                    orders_df.loc[sel_idx, "農曆生日"] = str(edit_lunar_bday)
+                    orders_df.loc[sel_idx, "出生時間"] = str(edit_btime)
+                    orders_df.loc[sel_idx, "商品種類"] = str(edit_type)
+                    orders_df.loc[sel_idx, "客製品項"] = str(edit_item)
+                    orders_df.loc[sel_idx, "總售價"]   = str(edit_price)
+                    orders_df.loc[sel_idx, "成本"]     = str(final_cost)
+                    orders_df.loc[sel_idx, "運費"]     = str(edit_ship)
+                    orders_df.loc[sel_idx, "工本費"]   = str(edit_labor)
+                    orders_df.loc[sel_idx, "總成本"]   = str(final_cost + edit_ship + edit_labor)
+                    orders_df.loc[sel_idx, "喜神"]     = "、".join(edit_xi)
+                    orders_df.loc[sel_idx, "忌神"]     = "、".join(edit_ji)
+                    orders_df.loc[sel_idx, "狀態"]     = str(e_status)
+                    orders_df.loc[sel_idx, "備註"]     = str(edit_note)
+                    save_orders(orders_df)
+                    sync_lunar_bday_to_customer(str(edit_name), str(edit_lunar_bday), _cust_df_7)
+                    st.success(f"✅ 訂單 {order_id} 已更新！")
+                    time.sleep(1); st.rerun()
 
 # ==========================================
 # § 7.5 訂單領料（庫存扣存）
@@ -1630,7 +1613,7 @@ elif page == "🔗 關係鏈結":
                                 "關係類型": rel_type,
                                 "客戶B":   cust_b,
                                 "備註":    rel_note,
-                                "建立時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "建立時間": now_tw().strftime("%Y-%m-%d %H:%M"),
                             }
                             rel_df = pd.concat([rel_df, pd.DataFrame([new_rel])], ignore_index=True)
                             save_relationships(rel_df)
@@ -1690,7 +1673,7 @@ elif page == "🔢 數字學計算":
                 by, bm, bd = parsed
                 years  = personal_year_range(bm, bd)
                 labels = ["去年", "今年", "明年"]
-                today  = datetime.now().date()
+                today  = now_tw().date()
 
                 # 判斷是否已過生日說明
                 passed = (today.month, today.day) >= (bm, bd)
