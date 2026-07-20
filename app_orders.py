@@ -11,6 +11,19 @@ def now_tw():
     """取得台灣時間"""
     return datetime.now(TW_TZ)
 
+def summary_text(label, value):
+    """Render long summary values without Streamlit metric truncation."""
+    value = str(value or "-")
+    st.markdown(
+        f"""
+        <div class="ifc-summary-text">
+            <div class="ifc-summary-label">{label}</div>
+            <div class="ifc-summary-value">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 # ==========================================
 # § 1 核心常數
 # ==========================================
@@ -596,6 +609,31 @@ def sync_customers_from_orders():
 # § 4 系統初始化
 # ==========================================
 st.set_page_config(page_title="IF Crystal 訂單系統", layout="wide", page_icon="📋")
+st.markdown(
+    """
+    <style>
+    .ifc-summary-text {
+        min-height: 72px;
+        padding-top: 2px;
+    }
+    .ifc-summary-label {
+        color: rgba(49, 51, 63, 0.6);
+        font-size: 14px;
+        line-height: 1.25;
+        margin-bottom: 6px;
+    }
+    .ifc-summary-value {
+        color: rgb(49, 51, 63);
+        font-size: 22px;
+        font-weight: 600;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.title("💎 IF Crystal 訂單系統")
 
 with st.sidebar:
@@ -822,7 +860,8 @@ elif page == "🔄 訂單管理":
             # ── 訂單摘要卡片 ──
             with st.container(border=True):
                 c1, c2, c3, c4, c5, c6 = st.columns(6)
-                c1.metric("訂單編號", order_id)
+                with c1:
+                    summary_text("訂單編號", order_id)
                 c2.metric("客戶",    safe_get(sel_order, "客戶名稱"))
                 price_v = safe_get(sel_order, "總售價")
                 tc_v    = safe_get(sel_order, "總成本")
@@ -833,7 +872,8 @@ elif page == "🔄 訂單管理":
                 profit = price_f - tc_f
                 c5.metric("利潤",    f"${profit:,.0f}",
                           delta=f"{(profit/price_f*100):.0f}%" if price_f else None)
-                c6.metric("目前狀態", safe_get(sel_order, "狀態"))
+                with c6:
+                    summary_text("目前狀態", safe_get(sel_order, "狀態"))
 
                 st.write(
                     f"**電話：** {safe_get(sel_order,'客戶電話') or '-'} | "
@@ -1018,10 +1058,12 @@ elif page == "📦 訂單領料":
             # ── 訂單摘要卡片 ──
             with st.container(border=True):
                 pc1, pc2, pc3, pc4 = st.columns(4)
-                pc1.metric("訂單編號", pick_order_id)
+                with pc1:
+                    summary_text("訂單編號", pick_order_id)
                 pc2.metric("客戶", safe_get(sel_pick_order, "客戶名稱"))
                 pc3.metric("品項", safe_get(sel_pick_order, "客製品項"))
-                pc4.metric("狀態", safe_get(sel_pick_order, "狀態"))
+                with pc4:
+                    summary_text("狀態", safe_get(sel_pick_order, "狀態"))
 
             # ── 已領料清單 ──
             st.divider()
