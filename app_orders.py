@@ -17,6 +17,24 @@ SHIPPING_METHODS = ["未指定", "郵寄", "宅配", "7-11 店到店", "全家�
 
 STATUS_FLOW    = ["未付款未出貨", "已付款未出貨", "未付款已出貨", "已完成", "已取消"]
 WUXING_OPTS    = ["金", "木", "水", "火", "土"]
+            "喜神":     safe_get(latest, "喜神"),
+            "忌神":     safe_get(latest, "忌神"),
+            "生日":     safe_get(latest, "生日"),
+            "農曆生日": safe_get(latest, "農曆生日"),
+            "出生時間":  safe_get(latest, "出生時間"),
+            "收件人姓名": "",
+            "收件電話":  "",
+            "收件類型":  "",
+            "收件地址":  "",
+            "超商名稱門市": "",
+            "收件人姓名": safe_get(latest, "收件人姓名"),
+            "收件電話":  safe_get(latest, "收件電話"),
+            "收件類型":  safe_get(latest, "收件類型"),
+            "收件地址":  safe_get(latest, "收件地址"),
+            "超商名稱門市": safe_get(latest, "超商名稱門市"),
+        })
+
+    if new_rows:
         xi_shen = c6.multiselect("喜神", WUXING_OPTS, default=default_xi)
         ji_shen = c7.multiselect("忌神", WUXING_OPTS, default=default_ji)
 
@@ -51,8 +69,8 @@ WUXING_OPTS    = ["金", "木", "水", "火", "土"]
                     "運費":     str(shipping_fee),
                     "工本費":   str(labor_fee),
                     "總成本":   str(cost_price + shipping_fee + labor_fee),
-                    "收件人姓名": recv_name,
-                    "收件電話":  recv_phone,
+                    "收件人姓名": recv_name or customer_name,
+                    "收件電話":  recv_phone or customer_phone,
                     "收件類型":  delivery_type,
                     "收件地址":  recv_addr,
                     "超商名稱門市": store_name,
@@ -62,3 +80,18 @@ WUXING_OPTS    = ["金", "木", "水", "火", "土"]
                     "備註":     order_note,
                     "狀態":     "未付款未出貨",
                     "建單人":   order_creator,
+                st.write(
+                    f"**喜神：** {safe_get(sel_order,'喜神') or '-'} | "
+                    f"**忌神：** {safe_get(sel_order,'忌神') or '-'}")
+                st.write(
+                    f"**出貨資料：** "
+                    f"{safe_get(sel_order,'收件類型') or '-'} | "
+                    f"收件人：{safe_get(sel_order,'收件人姓名') or '-'} | "
+                    f"電話：{safe_get(sel_order,'收件電話') or '-'} | "
+                    f"地址／門市：{safe_get(sel_order,'超商名稱門市') or safe_get(sel_order,'收件地址') or '-'}")
+                st.write(
+                    f"**物流：** "
+                    f"方式：{safe_get(sel_order,'出貨方式') or '-'} | "
+                    f"單號：{safe_get(sel_order,'物流單號') or '-'} | "
+                    f"出貨日期：{safe_get(sel_order,'出貨日期') or '-'}")
+                if safe_get(sel_order, "備註"):
