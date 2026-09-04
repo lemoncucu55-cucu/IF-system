@@ -4,25 +4,15 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, date, timezone, timedelta
 import time
+import base64
+import json
+import html
 
 # 台灣時區 (UTC+8)
 TW_TZ = timezone(timedelta(hours=8))
 def now_tw():
     """取得台灣時間"""
     return datetime.now(TW_TZ)
-
-def summary_text(label, value):
-    """Render long summary values without Streamlit metric truncation."""
-    value = str(value or "-")
-    st.markdown(
-        f"""
-        <div class="ifc-summary-text">
-            <div class="ifc-summary-label">{label}</div>
-            <div class="ifc-summary-value">{value}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 # ==========================================
 # § 1 核心常數
@@ -34,10 +24,7 @@ ORDER_COLUMNS = [
     '訂單編號', '建立時間', '客戶名稱', '客戶電話', '商品種類', '客製品項',
     '手圍', '生日', '農曆生日', '出生時間', '喜神', '忌神',
     '流年去年', '流年今年', '流年明年', '階段數',
-    '總售價', '成本', '運費', '工本費', '總成本',
-    '收件人姓名', '收件電話', '收件類型', '收件地址', '超商名稱門市',
-    '出貨方式', '物流單號', '出貨日期',
-    '備註', '狀態', '建單人'
+    '總售價', '成本', '運費', '工本費', '總成本', '備註', '狀態', '建單人'
 ]
 
 CUSTOM_ITEMS = ["手鍊", "項鍊", "鑰匙圈"]
@@ -49,7 +36,6 @@ CUSTOMER_COLUMNS = [
 ]
 
 DELIVERY_TYPES = ["🏠 住家", "🏪 超商"]
-SHIPPING_METHODS = ["未指定", "郵寄", "宅配", "7-11 店到店", "全家店到店", "面交", "其他"]
 
 STATUS_FLOW    = ["未付款未出貨", "已付款未出貨", "未付款已出貨", "已完成", "已取消"]
 WUXING_OPTS    = ["金", "木", "水", "火", "土"]
@@ -298,9 +284,9 @@ def get_gs_client():
         st.error(f"❌ Google 授權失敗：{e}")
         st.stop()
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def _load_sheet_cached(tab, columns_tuple):
-    """帶快取的 Google Sheets 讀取（300 秒內不重複呼叫 API）
+    """帶快取的 Google Sheets 讀取（120 秒內不重複呼叫 API）
     注意：失敗時拋出例外（不會被快取），只快取成功結果。"""
     columns = list(columns_tuple)
     wb = get_gs_client().open_by_key(SHEET_ID)
@@ -326,28 +312,17 @@ def _load_sheet_cached(tab, columns_tuple):
             df[col] = ""
     return df[columns].copy()
 
-def _is_rate_limit(e):
-    """判斷是否為 Google API 429 頻率限制錯誤"""
-    return "429" in str(e) or "Quota exceeded" in str(e)
-
 def _load_sheet(tab, columns):
     """讀取工作表，失敗時自動重連一次；仍失敗則顯示錯誤並回傳空 DataFrame"""
     try:
         return _load_sheet_cached(tab, tuple(columns))
-    except Exception as e1:
-        if _is_rate_limit(e1):
-            time.sleep(5)
+    except Exception:
+        # 第一次失敗 → 清除快取、重新授權後重試
         try:
             _load_sheet_cached.clear()
             get_gs_client.clear()
             return _load_sheet_cached(tab, tuple(columns))
         except Exception as e2:
-            if _is_rate_limit(e2):
-                time.sleep(10)
-                try:
-                    return _load_sheet_cached(tab, tuple(columns))
-                except Exception as e3:
-                    pass
             err_type = type(e2).__name__
             err_msg  = str(e2) or "(無錯誤訊息)"
             st.error(f"讀取 {tab} 失敗 [{err_type}]: {err_msg}")
@@ -366,22 +341,12 @@ def _save_sheet(tab, df):
     try:
         _do_save()
         _load_sheet_cached.clear()
-    except Exception as e1:
-        if _is_rate_limit(e1):
-            time.sleep(5)
+    except Exception:
         try:
             get_gs_client.clear()
             _load_sheet_cached.clear()
             _do_save()
         except Exception as e2:
-            if _is_rate_limit(e2):
-                time.sleep(10)
-                try:
-                    _do_save()
-                    _load_sheet_cached.clear()
-                    return
-                except Exception:
-                    pass
             err_type = type(e2).__name__
             err_msg  = str(e2) or "(無錯誤訊息)"
             st.error(f"儲存 {tab} 失敗 [{err_type}]: {err_msg}")
@@ -457,6 +422,35 @@ def calc_order_material_cost(order_id, items_df):
     if oi.empty:
         return 0.0
     return oi["小計"].apply(lambda x: _safe_float(x)).sum()
+
+def build_crystal_report_url(order_row, items_df):
+    """把訂單與實際領料資料編碼到本機水晶報告網址。"""
+    order_id = safe_get(order_row, "訂單編號")
+    order_items = get_order_items(order_id, items_df)
+    crystals = []
+    seen = set()
+    for _, item in order_items.iterrows():
+        name = str(item.get("名稱", "") or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            crystals.append({"name": name})
+
+    payload = {
+        "source": "if-crystal-orders",
+        "order_id": order_id,
+        "name": safe_get(order_row, "客戶名稱"),
+        "solar": safe_get(order_row, "生日"),
+        "lunar": safe_get(order_row, "農曆生日"),
+        "btime": safe_get(order_row, "出生時間"),
+        "wrist": safe_get(order_row, "手圍"),
+        "xiShen": safe_get(order_row, "喜神"),
+        "jiShen": safe_get(order_row, "忌神"),
+        "internalNotes": f"訂單編號：{order_id}\n{safe_get(order_row, '備註')}",
+        "crystals": crystals,
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    token = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    return "file:///Volumes/1%E4%B8%BB%E8%A6%81%E5%A4%96%E6%8E%A5/IF%20Crystal%20Report/crystal_report_app.html#order=" + token
 
 def pick_inventory_item(order_id, inv_row, qty, operator, inv_df, items_df, hist_df):
     inv_id    = inv_row["編號"]
@@ -568,6 +562,39 @@ def sync_lunar_bday_to_customer(name, lunar_bday, customers_df):
         save_customers(customers_df)
     return customers_df
 
+def add_customer_from_order(order_row, customers_df):
+    """若訂單中的客戶尚未建檔，立即新增至 Customers；回傳是否有新增。"""
+    name = str(order_row.get("客戶名稱", "") or "").strip()
+    if not name:
+        return False
+
+    if customers_df is None:
+        customers_df = pd.DataFrame(columns=CUSTOMER_COLUMNS)
+
+    existing_names = customers_df["客戶名稱"].fillna("").astype(str).str.strip()
+    if existing_names.eq(name).any():
+        return False
+
+    new_customer = {
+        "客戶名稱": name,
+        "客戶電話": safe_get(order_row, "客戶電話"),
+        "手圍": safe_get(order_row, "手圍"),
+        "喜神": safe_get(order_row, "喜神"),
+        "忌神": safe_get(order_row, "忌神"),
+        "生日": safe_get(order_row, "生日"),
+        "農曆生日": safe_get(order_row, "農曆生日"),
+        "出生時間": safe_get(order_row, "出生時間"),
+        "收件人姓名": "",
+        "收件電話": "",
+        "收件類型": "",
+        "收件地址": "",
+        "超商名稱門市": "",
+    }
+    customers_df = pd.concat(
+        [customers_df, pd.DataFrame([new_customer])], ignore_index=True)
+    save_customers(customers_df)
+    return True
+
 def sync_customers_from_orders():
     """
     掃描 Orders 表，將尚未存在於 Customers 表的客戶自動新增進去。
@@ -596,11 +623,11 @@ def sync_customers_from_orders():
             "生日":     safe_get(latest, "生日"),
             "農曆生日": safe_get(latest, "農曆生日"),
             "出生時間":  safe_get(latest, "出生時間"),
-            "收件人姓名": safe_get(latest, "收件人姓名"),
-            "收件電話":  safe_get(latest, "收件電話"),
-            "收件類型":  safe_get(latest, "收件類型"),
-            "收件地址":  safe_get(latest, "收件地址"),
-            "超商名稱門市": safe_get(latest, "超商名稱門市"),
+            "收件人姓名": "",
+            "收件電話":  "",
+            "收件類型":  "",
+            "收件地址":  "",
+            "超商名稱門市": "",
         })
 
     if new_rows:
@@ -614,31 +641,6 @@ def sync_customers_from_orders():
 # § 4 系統初始化
 # ==========================================
 st.set_page_config(page_title="IF Crystal 訂單系統", layout="wide", page_icon="📋")
-st.markdown(
-    """
-    <style>
-    .ifc-summary-text {
-        min-height: 72px;
-        padding-top: 2px;
-    }
-    .ifc-summary-label {
-        color: rgba(49, 51, 63, 0.6);
-        font-size: 14px;
-        line-height: 1.25;
-        margin-bottom: 6px;
-    }
-    .ifc-summary-value {
-        color: rgb(49, 51, 63);
-        font-size: 22px;
-        font-weight: 600;
-        line-height: 1.25;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 st.title("💎 IF Crystal 訂單系統")
 
 with st.sidebar:
@@ -755,34 +757,10 @@ if page == "📝 建立訂單":
         xi_shen = c6.multiselect("喜神", WUXING_OPTS, default=default_xi)
         ji_shen = c7.multiselect("忌神", WUXING_OPTS, default=default_ji)
 
-        st.subheader("出貨資料")
-        d1, d2 = st.columns(2)
-        recv_name = d1.text_input("收件人姓名", value=prefill.get("收件人姓名", "") or customer_name)
-        recv_phone = d2.text_input("收件電話", value=prefill.get("收件電話", "") or customer_phone)
-
-        default_delivery_type = prefill.get("收件類型", "")
-        delivery_type = st.selectbox(
-            "收件類型",
-            DELIVERY_TYPES,
-            index=DELIVERY_TYPES.index(default_delivery_type) if default_delivery_type in DELIVERY_TYPES else 0,
-            key="create_order_delivery_type",
-        )
-        if delivery_type == "🏪 超商":
-            d3, d4 = st.columns(2)
-            recv_addr = d3.text_input("超商地址（選填）", value=prefill.get("收件地址", ""))
-            store_name = d4.text_input("超商名稱／門市", value=prefill.get("超商名稱門市", ""))
-        else:
-            recv_addr = st.text_input("收件地址", value=prefill.get("收件地址", ""))
-            store_name = ""
-
-        s1, s2, s3 = st.columns(3)
-        shipping_method = s1.selectbox("出貨方式", SHIPPING_METHODS, key="create_order_shipping_method")
-        tracking_no = s2.text_input("物流單號", placeholder="出貨後填寫")
-        ship_date = s3.text_input("出貨日期", placeholder="例：2026-07-20")
-
         order_note = st.text_area("備註")
 
         if st.form_submit_button("✅ 建立訂單", use_container_width=True):
+            customer_name = customer_name.strip()
             if not customer_name:
                 st.error("❌ 請填寫客戶名稱")
             else:
@@ -806,21 +784,17 @@ if page == "📝 建立訂單":
                     "運費":     str(shipping_fee),
                     "工本費":   str(labor_fee),
                     "總成本":   str(cost_price + shipping_fee + labor_fee),
-                    "收件人姓名": recv_name or customer_name,
-                    "收件電話":  recv_phone or customer_phone,
-                    "收件類型":  delivery_type,
-                    "收件地址":  recv_addr,
-                    "超商名稱門市": store_name,
-                    "出貨方式":  shipping_method,
-                    "物流單號":  tracking_no,
-                    "出貨日期":  ship_date,
                     "備註":     order_note,
                     "狀態":     "未付款未出貨",
                     "建單人":   order_creator,
                 }
                 orders_df = pd.concat([orders_df, pd.DataFrame([new_order])], ignore_index=True)
                 save_orders(orders_df)
-                st.success(f"✅ 訂單 {order_id} 已建立！")
+                customer_added = add_customer_from_order(new_order, customers_df)
+                if customer_added:
+                    st.success(f"✅ 訂單 {order_id} 已建立，新客戶「{customer_name}」已加入客戶清單！")
+                else:
+                    st.success(f"✅ 訂單 {order_id} 已建立！")
                 time.sleep(1.5)
                 st.rerun()
 
@@ -872,16 +846,12 @@ elif page == "🔄 訂單管理":
         # ── 篩選 + 選擇訂單（整合）──
         st.divider()
         fc1, fc2, fc3 = st.columns([1, 1, 3])
-        status_filter   = fc1.selectbox("篩選狀態", ["未完成", "已完成", "已取消"])
+        status_filter   = fc1.selectbox("篩選狀態", ["全部"] + STATUS_FLOW)
         search_customer = fc2.text_input("搜尋客戶")
 
         disp = orders_df.copy()
-        if status_filter == "未完成":
-            disp = disp[~disp["狀態"].isin(["已完成", "已取消"])]
-        elif status_filter == "已完成":
-            disp = disp[disp["狀態"] == "已完成"]
-        elif status_filter == "已取消":
-            disp = disp[disp["狀態"] == "已取消"]
+        if status_filter != "全部":
+            disp = disp[disp["狀態"] == status_filter]
         if search_customer:
             disp = disp[disp["客戶名稱"].str.contains(search_customer, case=False, na=False)]
 
@@ -898,8 +868,7 @@ elif page == "🔄 訂單管理":
             # ── 訂單摘要卡片 ──
             with st.container(border=True):
                 c1, c2, c3, c4, c5, c6 = st.columns(6)
-                with c1:
-                    summary_text("訂單編號", order_id)
+                c1.metric("訂單編號", order_id)
                 c2.metric("客戶",    safe_get(sel_order, "客戶名稱"))
                 price_v = safe_get(sel_order, "總售價")
                 tc_v    = safe_get(sel_order, "總成本")
@@ -910,8 +879,7 @@ elif page == "🔄 訂單管理":
                 profit = price_f - tc_f
                 c5.metric("利潤",    f"${profit:,.0f}",
                           delta=f"{(profit/price_f*100):.0f}%" if price_f else None)
-                with c6:
-                    summary_text("目前狀態", safe_get(sel_order, "狀態"))
+                c6.metric("目前狀態", safe_get(sel_order, "狀態"))
 
                 st.write(
                     f"**電話：** {safe_get(sel_order,'客戶電話') or '-'} | "
@@ -925,17 +893,6 @@ elif page == "🔄 訂單管理":
                 st.write(
                     f"**喜神：** {safe_get(sel_order,'喜神') or '-'} | "
                     f"**忌神：** {safe_get(sel_order,'忌神') or '-'}")
-                st.write(
-                    f"**出貨資料：** "
-                    f"{safe_get(sel_order,'收件類型') or '-'} | "
-                    f"收件人：{safe_get(sel_order,'收件人姓名') or '-'} | "
-                    f"電話：{safe_get(sel_order,'收件電話') or '-'} | "
-                    f"地址／門市：{safe_get(sel_order,'超商名稱門市') or safe_get(sel_order,'收件地址') or '-'}")
-                st.write(
-                    f"**物流：** "
-                    f"方式：{safe_get(sel_order,'出貨方式') or '-'} | "
-                    f"單號：{safe_get(sel_order,'物流單號') or '-'} | "
-                    f"出貨日期：{safe_get(sel_order,'出貨日期') or '-'}")
                 if safe_get(sel_order, "備註"):
                     st.write(f"**備註：** {sel_order['備註']}")
 
@@ -945,6 +902,29 @@ elif page == "🔄 訂單管理":
                 if bday_val:
                     st.markdown("**📊 流年 × 階段數 三年對照表**")
                     render_numerology_table(bday_val, lunar_val, btime_val)
+
+            # ── 水晶報告 ──
+            report_items_df = load_order_items()
+            report_items = get_order_items(order_id, report_items_df)
+            report_url = build_crystal_report_url(sel_order, report_items_df)
+            if report_items.empty:
+                st.warning("⚠️ 此訂單尚未領料。請先到「📦 訂單領料」登記材料，再產生報告。")
+            else:
+                material_names = "、".join(dict.fromkeys(
+                    str(v).strip() for v in report_items["名稱"].tolist() if str(v).strip()
+                ))
+                st.caption(f"💎 報告材料：{material_names}")
+                safe_url = html.escape(report_url, quote=True)
+                st.markdown(
+                    f'<a href="{safe_url}" target="_blank" '
+                    'style="display:block;text-align:center;padding:.75rem 1rem;'
+                    'border-radius:.5rem;background:#9a7a4a;color:white;'
+                    'text-decoration:none;font-weight:600">'
+                    '💎 自動帶入資料並產生水晶報告</a>',
+                    unsafe_allow_html=True,
+                )
+                st.caption("若瀏覽器阻擋 file:// 連結，請複製下方網址貼到網址列開啟。")
+                st.code(report_url, language=None)
 
             # ── 快速變更狀態 ──
             cur_status = safe_get(sel_order, "狀態")
@@ -956,8 +936,6 @@ elif page == "🔄 訂單管理":
                     time.sleep(1.5); st.rerun()
                 if cb.button("📦 已出貨", type="primary", use_container_width=True):
                     orders_df.loc[sel_idx,"狀態"] = "未付款已出貨"
-                    if not safe_get(orders_df.loc[sel_idx], "出貨日期"):
-                        orders_df.loc[sel_idx,"出貨日期"] = now_tw().strftime("%Y-%m-%d")
                     save_orders(orders_df); st.success(f"✅ {order_id} 已出貨")
                     time.sleep(1.5); st.rerun()
                 if cc.button("❌ 取消訂單", use_container_width=True):
@@ -968,8 +946,6 @@ elif page == "🔄 訂單管理":
                 ca, cb = st.columns(2)
                 if ca.button("📦 已出貨 → 完成", type="primary", use_container_width=True):
                     orders_df.loc[sel_idx,"狀態"] = "已完成"
-                    if not safe_get(orders_df.loc[sel_idx], "出貨日期"):
-                        orders_df.loc[sel_idx,"出貨日期"] = now_tw().strftime("%Y-%m-%d")
                     save_orders(orders_df); st.success(f"🎉 {order_id} 已完成！")
                     time.sleep(1.5); st.rerun()
                 if cb.button("❌ 取消訂單", use_container_width=True):
@@ -1045,37 +1021,6 @@ elif page == "🔄 訂單管理":
                 edit_xi = ce5.multiselect("喜神", WUXING_OPTS, default=cx, key=f"exi_{_oid}")
                 edit_ji = ce6.multiselect("忌神", WUXING_OPTS, default=cj, key=f"eji_{_oid}")
 
-                st.markdown("#### 📦 出貨資料")
-                ed1, ed2 = st.columns(2)
-                edit_recv_name = ed1.text_input("收件人姓名", value=safe_get(sel_order, "收件人姓名") or edit_name, key=f"erecv_name_{_oid}")
-                edit_recv_phone = ed2.text_input("收件電話", value=safe_get(sel_order, "收件電話") or edit_phone, key=f"erecv_phone_{_oid}")
-
-                cur_delivery_type = safe_get(sel_order, "收件類型")
-                edit_delivery_type = st.selectbox(
-                    "收件類型",
-                    DELIVERY_TYPES,
-                    index=DELIVERY_TYPES.index(cur_delivery_type) if cur_delivery_type in DELIVERY_TYPES else 0,
-                    key=f"edelivery_type_{_oid}",
-                )
-                if edit_delivery_type == "🏪 超商":
-                    ed3, ed4 = st.columns(2)
-                    edit_recv_addr = ed3.text_input("超商地址（選填）", value=safe_get(sel_order, "收件地址"), key=f"erecv_addr_{_oid}")
-                    edit_store_name = ed4.text_input("超商名稱／門市", value=safe_get(sel_order, "超商名稱門市"), key=f"estore_name_{_oid}")
-                else:
-                    edit_recv_addr = st.text_input("收件地址", value=safe_get(sel_order, "收件地址"), key=f"erecv_addr_{_oid}")
-                    edit_store_name = ""
-
-                es1, es2, es3 = st.columns(3)
-                cur_shipping_method = safe_get(sel_order, "出貨方式")
-                edit_shipping_method = es1.selectbox(
-                    "出貨方式",
-                    SHIPPING_METHODS,
-                    index=SHIPPING_METHODS.index(cur_shipping_method) if cur_shipping_method in SHIPPING_METHODS else 0,
-                    key=f"eshipping_method_{_oid}",
-                )
-                edit_tracking_no = es2.text_input("物流單號", value=safe_get(sel_order, "物流單號"), key=f"etracking_no_{_oid}")
-                edit_ship_date = es3.text_input("出貨日期", value=safe_get(sel_order, "出貨日期"), placeholder="例：2026-07-20", key=f"eship_date_{_oid}")
-
                 cur_status_e = safe_get(sel_order, "狀態")
                 e_status = st.selectbox("狀態", STATUS_FLOW,
                     index=STATUS_FLOW.index(cur_status_e) if cur_status_e in STATUS_FLOW else 0,
@@ -1084,9 +1029,6 @@ elif page == "🔄 訂單管理":
 
                 if st.form_submit_button("💾 儲存修改", use_container_width=True):
                     final_cost = _picked_cost if _has_picked else edit_cost
-                    final_ship_date = str(edit_ship_date).strip()
-                    if e_status in ("未付款已出貨", "已完成") and not final_ship_date:
-                        final_ship_date = now_tw().strftime("%Y-%m-%d")
                     orders_df.loc[sel_idx, "客戶名稱"] = str(edit_name)
                     orders_df.loc[sel_idx, "客戶電話"] = str(edit_phone)
                     orders_df.loc[sel_idx, "手圍"]     = str(edit_wrist)
@@ -1100,14 +1042,6 @@ elif page == "🔄 訂單管理":
                     orders_df.loc[sel_idx, "運費"]     = str(edit_ship)
                     orders_df.loc[sel_idx, "工本費"]   = str(edit_labor)
                     orders_df.loc[sel_idx, "總成本"]   = str(final_cost + edit_ship + edit_labor)
-                    orders_df.loc[sel_idx, "收件人姓名"] = str(edit_recv_name)
-                    orders_df.loc[sel_idx, "收件電話"]  = str(edit_recv_phone)
-                    orders_df.loc[sel_idx, "收件類型"]  = str(edit_delivery_type)
-                    orders_df.loc[sel_idx, "收件地址"]  = str(edit_recv_addr)
-                    orders_df.loc[sel_idx, "超商名稱門市"] = str(edit_store_name)
-                    orders_df.loc[sel_idx, "出貨方式"]  = str(edit_shipping_method)
-                    orders_df.loc[sel_idx, "物流單號"]  = str(edit_tracking_no)
-                    orders_df.loc[sel_idx, "出貨日期"]  = final_ship_date
                     orders_df.loc[sel_idx, "喜神"]     = "、".join(edit_xi)
                     orders_df.loc[sel_idx, "忌神"]     = "、".join(edit_ji)
                     orders_df.loc[sel_idx, "狀態"]     = str(e_status)
@@ -1153,12 +1087,10 @@ elif page == "📦 訂單領料":
             # ── 訂單摘要卡片 ──
             with st.container(border=True):
                 pc1, pc2, pc3, pc4 = st.columns(4)
-                with pc1:
-                    summary_text("訂單編號", pick_order_id)
+                pc1.metric("訂單編號", pick_order_id)
                 pc2.metric("客戶", safe_get(sel_pick_order, "客戶名稱"))
                 pc3.metric("品項", safe_get(sel_pick_order, "客製品項"))
-                with pc4:
-                    summary_text("狀態", safe_get(sel_pick_order, "狀態"))
+                pc4.metric("狀態", safe_get(sel_pick_order, "狀態"))
 
             # ── 已領料清單 ──
             st.divider()
